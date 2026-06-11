@@ -116,8 +116,21 @@
 
 <script>
 (async () => {
-  const bridge = window.AstrBotPluginPage;
   const $ = (id) => document.getElementById(id);
+
+  // 桥接 SDK 由 AstrBot 注入在本脚本之后，需等待其加载完成
+  function waitForBridge(timeoutMs = 8000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      (function check() {
+        if (window.AstrBotPluginPage) return resolve(window.AstrBotPluginPage);
+        if (Date.now() - start > timeoutMs) return resolve(null);
+        setTimeout(check, 50);
+      })();
+    });
+  }
+
+  const bridge = await waitForBridge();
 
   function toast(msg, isErr) {
     const t = $("toast");
@@ -129,8 +142,9 @@
   }
 
   if (!bridge) {
-    $("subs-body").innerHTML =
-      '<tr><td colspan="3" class="muted">未检测到 AstrBot 页面桥接 SDK，请确认 AstrBot 版本支持插件页面。</td></tr>';
+    const msg = '<tr><td colspan="3" class="muted">等待 AstrBot 页面桥接 SDK 超时，请刷新页面或确认 AstrBot 版本支持插件页面。</td></tr>';
+    $("subs-body").innerHTML = msg;
+    $("rules-body").innerHTML = msg;
     return;
   }
   await bridge.ready();
