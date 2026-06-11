@@ -2,7 +2,7 @@
 
 订阅 [X API Filtered Stream](https://docs.x.com/x-api/posts/filtered-stream/introduction)（`GET /2/tweets/search/stream`），**按会话各自的订阅名单**将新推文转发到对应会话（QQ / Telegram / Discord 等 AstrBot 支持的平台）：每个群可以订阅不同的 X 用户，某个用户的推文只会发给订阅了 ta 的群。
 
-插件只维持一条流式连接并按作者分发，流规则请在 X 开发者控制台或通过 `POST /2/tweets/search/stream/rules` 提前配置好——群里订阅的用户必须已包含在流规则中（如 `from:user1 OR from:user2`），否则流里根本不会有 ta 的推文。
+插件只维持一条流式连接并按作者分发——群里订阅的用户必须已包含在流规则中（如 `from:user1 OR from:user2`），否则流里根本不会有 ta 的推文。流规则可以直接在插件的 WebUI 页面中可视化增删，也可以在 X 开发者控制台配置。
 
 ## 配置
 
@@ -35,7 +35,12 @@
 
 ### WebUI 订阅管理页
 
-在 **WebUI → 插件管理 → X 推文转发 → 插件详情 → Pages → subscriptions** 中可以可视化查看流连接状态、X 上配置的全部流规则（规则表达式 / tag / ID）和各会话的订阅名单，并直接添加 / 移除会话订阅（需要支持插件 Pages 的 AstrBot 版本）。
+在 **WebUI → 插件管理 → X 推文转发 → 插件详情 → Pages → subscriptions** 中可以（需要支持插件 Pages 的 AstrBot 版本）：
+
+- 查看流连接状态、X 上配置的全部流规则（规则表达式 / tag / ID）和各会话的订阅名单；
+- **可视化构建并新增流规则**：按"来自用户 / 关键词 / 话题标签 / 提及 / 语言 / 类型条件（排除转推、含媒体等）"分项填写，自动拼接成规则表达式（组间 AND、组内 OR），可在预览框手动微调后提交（`POST /2/tweets/search/stream/rules`）；
+- 删除任意一条流规则；
+- 添加 / 移除会话订阅。
 
 ## 行为说明
 

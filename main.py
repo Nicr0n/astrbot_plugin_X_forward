@@ -29,7 +29,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.5.0",
+    "v1.6.0",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -93,6 +93,12 @@ class XForwardPlugin(Star):
             self.context.register_web_api(
                 f"/{PLUGIN_NAME}/rules", self._api_rules, ["GET"], "Filtered Stream 规则"
             )
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/rules_add", self._api_rules_add, ["POST"], "新增流规则"
+            )
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/rules_delete", self._api_rules_delete, ["POST"], "删除流规则"
+            )
         except Exception as e:
             logger.warning(
                 f"[X Forward] 注册 WebUI 接口失败（AstrBot 版本可能不支持插件页面）: {e}"
@@ -118,6 +124,62 @@ class XForwardPlugin(Star):
             return jsonify({"ok": True, "rules": rules})
         except Exception as e:
             return jsonify({"ok": False, "message": str(e)}), 502
+
+    @staticmethod
+    def _rule_op_errors(body: dict) -> str:
+        """提取规则增删响应中的错误描述（部分失败时 HTTP 仍可能是 200/201）"""
+        msgs = []
+        for err in body.get("errors", []):
+            part = err.get("title") or ""
+            detail = err.get("details") or err.get("detail") or err.get("value") or ""
+            if isinstance(detail, list):
+                detail = "; ".join(str(d) for d in detail)
+            msgs.append(f"{part}: {detail}" if part and detail else (part or str(detail)))
+        return "；".join(m for m in msgs if m)
+
+    async def _api_rules_add(self):
+        from quart import jsonify, request
+
+        body = await request.get_json(force=True) or {}
+        value = (body.get("value") or "").strip()
+        tag = (body.get("tag") or "").strip()
+        if not value:
+            return jsonify({"ok": False, "message": "规则表达式不能为空"}), 400
+        rule: dict = {"value": value}
+        if tag:
+            rule["tag"] = tag
+        try:
+            result = await self._modify_rules({"add": [rule]})
+        except Exception as e:
+            return jsonify({"ok": False, "message": str(e)}), 502
+        err = self._rule_op_errors(result)
+        if err:
+            return jsonify({"ok": False, "message": err}), 400
+        try:
+            rules = await self._fetch_rules()
+        except Exception:
+            rules = None
+        return jsonify({"ok": True, "rules": rules})
+
+    async def _api_rules_delete(self):
+        from quart import jsonify, request
+
+        body = await request.get_json(force=True) or {}
+        ids = [str(i) for i in (body.get("ids") or []) if str(i).strip()]
+        if not ids:
+            return jsonify({"ok": False, "message": "缺少规则 ID"}), 400
+        try:
+            result = await self._modify_rules({"delete": {"ids": ids}})
+        except Exception as e:
+            return jsonify({"ok": False, "message": str(e)}), 502
+        err = self._rule_op_errors(result)
+        if err:
+            return jsonify({"ok": False, "message": err}), 400
+        try:
+            rules = await self._fetch_rules()
+        except Exception:
+            rules = None
+        return jsonify({"ok": True, "rules": rules})
 
     async def _api_subscribe(self):
         from quart import jsonify, request
@@ -295,6 +357,28 @@ class XForwardPlugin(Star):
                     detail = body.get("detail") or body.get("title") or str(body)[:300]
                     raise RuntimeError(f"HTTP {resp.status}: {detail}")
                 return body.get("data", [])
+
+    async def _modify_rules(self, payload: dict) -> dict:
+        """新增/删除流规则 (POST /2/tweets/search/stream/rules)"""
+        token, proxy = self._auth_ctx()
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                RULES_URL,
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+                proxy=proxy,
+            ) as resp:
+                body = await resp.json(content_type=None)
+                if resp.status not in (200, 201):
+                    detail = (
+                        self._rule_op_errors(body)
+                        or body.get("detail")
+                        or body.get("title")
+                        or str(body)[:300]
+                    )
+                    raise RuntimeError(f"HTTP {resp.status}: {detail}")
+                return body
 
     # ---------------- 流式连接 ----------------
 

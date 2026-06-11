@@ -61,6 +61,20 @@
   input.users-input { flex: 1; min-width: 180px; }
   form button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .muted { color: var(--muted); font-size: 13px; }
+  .builder { display: flex; flex-direction: column; gap: 10px; }
+  .builder .field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .builder .field > label { width: 110px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
+  .builder .field input[type="text"], .builder .field select {
+    flex: 1; min-width: 220px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 13px;
+  }
+  .builder .checks { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+  .builder .checks label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .builder .preview-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .builder #rule-preview {
+    flex: 1; min-width: 260px; font-family: ui-monospace, monospace;
+  }
+  .builder .count { font-size: 12px; color: var(--muted); }
   #toast {
     position: fixed; top: 16px; right: 16px; background: var(--card); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
@@ -84,12 +98,66 @@
       <button id="rules-refresh" style="border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:2px 10px;cursor:pointer;font-size:12px;">刷新</button>
     </h2>
     <table>
-      <thead><tr><th>规则表达式</th><th style="width:18%">标签 (tag)</th><th style="width:24%">规则 ID</th></tr></thead>
+      <thead><tr><th>规则表达式</th><th style="width:16%">标签 (tag)</th><th style="width:22%">规则 ID</th><th style="width:70px">操作</th></tr></thead>
       <tbody id="rules-body">
-        <tr><td colspan="3" class="muted">加载中...</td></tr>
+        <tr><td colspan="4" class="muted">加载中...</td></tr>
       </tbody>
     </table>
     <p class="muted">数据实时来自 <code>GET /2/tweets/search/stream/rules</code>。群里订阅的用户必须被规则覆盖（如 <code>from:用户名</code>），否则流中不会有其推文。</p>
+  </div>
+
+  <div class="section">
+    <h2>新增流规则</h2>
+    <div class="builder">
+      <div class="field">
+        <label>来自用户 from:</label>
+        <input type="text" id="rb-from" placeholder="用户名，多个用空格/逗号分隔，如 elonmusk, NASA → (from:elonmusk OR from:NASA)" />
+      </div>
+      <div class="field">
+        <label>关键词</label>
+        <input type="text" id="rb-keywords" placeholder="逗号分隔，含空格的短语自动加引号，如 happy hour, cat → (\"happy hour\" OR cat)" />
+      </div>
+      <div class="field">
+        <label>话题标签 #</label>
+        <input type="text" id="rb-hashtags" placeholder="不含 #，多个用空格/逗号分隔" />
+      </div>
+      <div class="field">
+        <label>提及 @</label>
+        <input type="text" id="rb-mentions" placeholder="不含 @，多个用空格/逗号分隔" />
+      </div>
+      <div class="field">
+        <label>语言 lang:</label>
+        <select id="rb-lang">
+          <option value="">不限</option>
+          <option value="zh">中文 (zh)</option>
+          <option value="en">英语 (en)</option>
+          <option value="ja">日语 (ja)</option>
+          <option value="ko">韩语 (ko)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>类型条件</label>
+        <div class="checks">
+          <label><input type="checkbox" id="rb-no-retweet" /> 排除转推 -is:retweet</label>
+          <label><input type="checkbox" id="rb-no-reply" /> 排除回复 -is:reply</label>
+          <label><input type="checkbox" id="rb-no-quote" /> 排除引用 -is:quote</label>
+          <label><input type="checkbox" id="rb-has-media" /> 含媒体 has:media</label>
+          <label><input type="checkbox" id="rb-has-images" /> 含图片 has:images</label>
+          <label><input type="checkbox" id="rb-has-videos" /> 含视频 has:videos</label>
+          <label><input type="checkbox" id="rb-has-links" /> 含链接 has:links</label>
+        </div>
+      </div>
+      <div class="field">
+        <label>标签 (tag)</label>
+        <input type="text" id="rb-tag" placeholder="可选，便于识别该规则，会随推文一起显示" />
+      </div>
+      <div class="preview-row">
+        <input type="text" id="rule-preview" placeholder="规则预览，可在此手动微调后提交" />
+        <span class="count" id="rule-count">0 字符</span>
+        <button type="button" class="primary" id="rule-submit" style="background:var(--accent);border:1px solid var(--accent);color:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;">新增规则</button>
+      </div>
+      <p class="muted">各组条件之间为 AND（空格连接），组内多个值为 OR。注意规则必须包含至少一个独立条件（用户/关键词/话题/提及），仅勾选类型条件无法构成有效规则；is:/has:/lang: 均为附加限定。规则长度上限取决于套餐（Pro 为 512 字符）。</p>
+    </div>
   </div>
 
   <div class="section">
@@ -194,43 +262,133 @@
     }
   }
 
+  function renderRules(rules) {
+    const body = $("rules-body");
+    if (!rules.length) {
+      body.innerHTML = '<tr><td colspan="4" class="muted">X 上当前没有配置任何流规则，可在下方「新增流规则」中添加。</td></tr>';
+      return;
+    }
+    body.innerHTML = "";
+    for (const r of rules) {
+      const tr = document.createElement("tr");
+      const tdVal = document.createElement("td");
+      tdVal.className = "umo";
+      tdVal.textContent = r.value || "";
+      const tdTag = document.createElement("td");
+      tdTag.textContent = r.tag || "-";
+      const tdId = document.createElement("td");
+      tdId.className = "umo";
+      tdId.textContent = r.id || "";
+      const tdAct = document.createElement("td");
+      tdAct.className = "row-actions";
+      const del = document.createElement("button");
+      del.textContent = "删除";
+      del.onclick = async () => {
+        if (!confirm("删除该规则？\n" + (r.value || r.id))) return;
+        try {
+          const d = unwrap(await bridge.apiPost("rules_delete", { ids: [r.id] }));
+          if (d && d.ok === false) throw d.message || "未知错误";
+          toast("规则已删除");
+          if (d && d.rules) renderRules(d.rules);
+          else refreshRules();
+        } catch (e) {
+          toast("删除失败: " + ((e && e.message) || e), true);
+        }
+      };
+      tdAct.appendChild(del);
+      tr.append(tdVal, tdTag, tdId, tdAct);
+      body.appendChild(tr);
+    }
+  }
+
   async function refreshRules() {
     const body = $("rules-body");
-    body.innerHTML = '<tr><td colspan="3" class="muted">加载中...</td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="muted">加载中...</td></tr>';
     try {
       const d = unwrap(await bridge.apiGet("rules"));
       if (d && d.ok === false) throw d.message || "未知错误";
-      const rules = (d && d.rules) || [];
-      if (!rules.length) {
-        body.innerHTML = '<tr><td colspan="3" class="muted">X 上当前没有配置任何流规则，请到开发者控制台或通过 POST /2/tweets/search/stream/rules 添加。</td></tr>';
-        return;
-      }
-      body.innerHTML = "";
-      for (const r of rules) {
-        const tr = document.createElement("tr");
-        const tdVal = document.createElement("td");
-        tdVal.className = "umo";
-        tdVal.textContent = r.value || "";
-        const tdTag = document.createElement("td");
-        tdTag.textContent = r.tag || "-";
-        const tdId = document.createElement("td");
-        tdId.className = "umo";
-        tdId.textContent = r.id || "";
-        tr.append(tdVal, tdTag, tdId);
-        body.appendChild(tr);
-      }
+      renderRules((d && d.rules) || []);
     } catch (e) {
       const msg = (e && e.message) || e;
       body.innerHTML = "";
       const tr = document.createElement("tr");
       const td = document.createElement("td");
-      td.colSpan = 3;
+      td.colSpan = 4;
       td.className = "muted";
       td.textContent = "获取流规则失败: " + msg;
       tr.appendChild(td);
       body.appendChild(tr);
     }
   }
+
+  // ---------- 规则构建器 ----------
+
+  const splitList = (s) =>
+    (s || "").replace(/，/g, ",").split(/[\s,]+/).map((t) => t.trim()).filter(Boolean);
+
+  const orGroup = (arr) => (arr.length > 1 ? `(${arr.join(" OR ")})` : arr[0] || "");
+
+  function buildRule() {
+    const parts = [];
+    const froms = splitList($("rb-from").value).map((u) => "from:" + u.replace(/^@/, ""));
+    if (froms.length) parts.push(orGroup(froms));
+
+    const keywords = ($("rb-keywords").value || "")
+      .replace(/，/g, ",").split(",").map((t) => t.trim()).filter(Boolean)
+      .map((k) => (/\s/.test(k) ? `"${k}"` : k));
+    if (keywords.length) parts.push(orGroup(keywords));
+
+    const hashtags = splitList($("rb-hashtags").value).map((h) => "#" + h.replace(/^#/, ""));
+    if (hashtags.length) parts.push(orGroup(hashtags));
+
+    const mentions = splitList($("rb-mentions").value).map((m) => "@" + m.replace(/^@/, ""));
+    if (mentions.length) parts.push(orGroup(mentions));
+
+    if ($("rb-lang").value) parts.push("lang:" + $("rb-lang").value);
+    if ($("rb-no-retweet").checked) parts.push("-is:retweet");
+    if ($("rb-no-reply").checked) parts.push("-is:reply");
+    if ($("rb-no-quote").checked) parts.push("-is:quote");
+    if ($("rb-has-media").checked) parts.push("has:media");
+    if ($("rb-has-images").checked) parts.push("has:images");
+    if ($("rb-has-videos").checked) parts.push("has:videos");
+    if ($("rb-has-links").checked) parts.push("has:links");
+
+    $("rule-preview").value = parts.join(" ");
+    updateCount();
+  }
+
+  function updateCount() {
+    $("rule-count").textContent = $("rule-preview").value.length + " 字符";
+  }
+
+  for (const id of [
+    "rb-from", "rb-keywords", "rb-hashtags", "rb-mentions", "rb-lang",
+    "rb-no-retweet", "rb-no-reply", "rb-no-quote",
+    "rb-has-media", "rb-has-images", "rb-has-videos", "rb-has-links",
+  ]) {
+    $(id).addEventListener("input", buildRule);
+    $(id).addEventListener("change", buildRule);
+  }
+  $("rule-preview").addEventListener("input", updateCount);
+
+  $("rule-submit").addEventListener("click", async () => {
+    const value = $("rule-preview").value.trim();
+    if (!value) {
+      toast("规则为空，请先填写条件", true);
+      return;
+    }
+    try {
+      const d = unwrap(
+        await bridge.apiPost("rules_add", { value, tag: $("rb-tag").value.trim() })
+      );
+      if (d && d.ok === false) throw d.message || "未知错误";
+      toast("规则已添加");
+      if (d && d.rules) renderRules(d.rules);
+      else refreshRules();
+    } catch (e) {
+      toast("添加失败: " + ((e && e.message) || e), true);
+    }
+  });
 
   async function refresh() {
     try {
