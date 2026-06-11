@@ -11,9 +11,15 @@ from astrbot.api.star import Context, Star, StarTools, register
 
 PLUGIN_NAME = "astrbot_plugin_X_forward"
 
-STREAM_URL = "https://api.x.com/2/tweets/search/stream"
+# X Activity API (XAA)：控制台配置的 Event subscriptions 经此流投递
+ACTIVITY_STREAM_URL = "https://api.x.com/2/activity/stream"
+ACTIVITY_SUBSCRIPTIONS_URL = "https://api.x.com/2/activity/subscriptions"
 
-# 流式连接每 20 秒会收到一个空行 keep-alive，超过该时间没有任何数据则视为断线重连
+# Filtered Stream：基于规则表达式的推文流（可选模式）
+FILTERED_STREAM_URL = "https://api.x.com/2/tweets/search/stream"
+FILTERED_RULES_URL = "https://api.x.com/2/tweets/search/stream/rules"
+
+# 流式连接以空行作为 keep-alive，超过该时间没有任何数据则视为断线重连
 SOCK_READ_TIMEOUT = 40
 
 REF_TYPE_LABEL = {
@@ -26,8 +32,8 @@ REF_TYPE_LABEL = {
 @register(
     "astrbot_plugin_X_forward",
     "Nicr0n",
-    "订阅 X (Twitter) Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.2.0",
+    "订阅 X Activity 事件流 / Filtered Stream，按会话订阅名单将新推文转发到对应会话",
+    "v1.3.0",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -46,6 +52,40 @@ class XForwardPlugin(Star):
 
         self._register_web_apis()
 
+    def _load_subs(self) -> dict[str, list[str]]:
+        try:
+            if self._subs_file.exists():
+                return json.loads(self._subs_file.read_text("utf-8"))
+        except Exception as e:
+            logger.error(f"[X Forward] 读取订阅数据失败: {e}")
+        return {}
+
+    def _save_subs(self):
+        try:
+            self._subs_file.write_text(
+                json.dumps(self._subs, ensure_ascii=False, indent=2), "utf-8"
+            )
+        except Exception as e:
+            logger.error(f"[X Forward] 保存订阅数据失败: {e}")
+
+    def _stream_mode(self) -> str:
+        mode = (self.config.get("stream_mode") or "activity").strip().lower()
+        return mode if mode in ("activity", "filtered") else "activity"
+
+    async def initialize(self):
+        self._task = asyncio.create_task(self._stream_loop())
+
+    async def terminate(self):
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    # ---------------- WebUI 接口 ----------------
+
     def _register_web_apis(self):
         """注册 WebUI 插件页面（pages/subscriptions）使用的后端接口"""
         try:
@@ -58,6 +98,9 @@ class XForwardPlugin(Star):
             self.context.register_web_api(
                 f"/{PLUGIN_NAME}/unsubscribe", self._api_unsubscribe, ["POST"], "移除订阅"
             )
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/events", self._api_events, ["GET"], "X 端事件订阅"
+            )
         except Exception as e:
             logger.warning(
                 f"[X Forward] 注册 WebUI 接口失败（AstrBot 版本可能不支持插件页面）: {e}"
@@ -69,11 +112,21 @@ class XForwardPlugin(Star):
         return jsonify(
             {
                 "status": self._status,
+                "mode": self._stream_mode(),
                 "last_tweet_at": self._last_tweet_at,
                 "forwarded_count": self._forwarded_count,
                 "subscriptions": self._subs,
             }
         )
+
+    async def _api_events(self):
+        from quart import jsonify
+
+        try:
+            mode, items = await self._fetch_remote_subscriptions()
+            return jsonify({"ok": True, "mode": mode, "items": items})
+        except Exception as e:
+            return jsonify({"ok": False, "message": str(e)}), 502
 
     async def _api_subscribe(self):
         from quart import jsonify, request
@@ -113,34 +166,6 @@ class XForwardPlugin(Star):
         self._save_subs()
         return jsonify({"ok": True, "subscriptions": self._subs})
 
-    def _load_subs(self) -> dict[str, list[str]]:
-        try:
-            if self._subs_file.exists():
-                return json.loads(self._subs_file.read_text("utf-8"))
-        except Exception as e:
-            logger.error(f"[X Forward] 读取订阅数据失败: {e}")
-        return {}
-
-    def _save_subs(self):
-        try:
-            self._subs_file.write_text(
-                json.dumps(self._subs, ensure_ascii=False, indent=2), "utf-8"
-            )
-        except Exception as e:
-            logger.error(f"[X Forward] 保存订阅数据失败: {e}")
-
-    async def initialize(self):
-        self._task = asyncio.create_task(self._stream_loop())
-
-    async def terminate(self):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-
     # ---------------- 指令 ----------------
 
     @staticmethod
@@ -172,7 +197,7 @@ class XForwardPlugin(Star):
         yield event.plain_result(
             f"已为本会话新增订阅: {', '.join(added) if added else '（均已存在）'}\n"
             f"当前订阅: {', '.join(self._subs[umo])}\n"
-            f"注意: 用户需已包含在 X 开发者控制台配置的流规则中，本插件只做按会话分发。"
+            f"注意: 用户需已包含在 X 端配置的事件订阅/流规则中，本插件只做按会话分发。"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -208,11 +233,36 @@ class XForwardPlugin(Star):
             yield event.plain_result("本会话订阅的 X 用户:\n" + "\n".join(f"  - {u}" for u in subs))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @xfwd.command("events")
+    async def events(self, event: AstrMessageEvent):
+        """查看 X 端配置的事件订阅 (Event subscriptions) 或流规则"""
+        try:
+            mode, items = await self._fetch_remote_subscriptions()
+        except Exception as e:
+            yield event.plain_result(f"获取 X 端订阅失败: {e}")
+            return
+        title = (
+            "X Activity 事件订阅 (Event subscriptions)"
+            if mode == "activity"
+            else "Filtered Stream 流规则"
+        )
+        if not items:
+            yield event.plain_result(f"{title}: X 端当前没有任何配置。")
+            return
+        lines = [f"{title}，共 {len(items)} 条:"]
+        for it in items:
+            tag = f" 🏷️{it['tag']}" if it.get("tag") else ""
+            lines.append(f"  - [{it.get('type', '')}] {it.get('content', '')}{tag}")
+            lines.append(f"    id: {it.get('id', '')}")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("status")
     async def status(self, event: AstrMessageEvent):
         """查看流连接状态与所有会话的订阅情况"""
         lines = [
-            "X Filtered Stream 状态",
+            "X 转发插件状态",
+            f"流模式: {self._stream_mode()}",
             f"连接状态: {self._status}",
             f"最近收到推文: {self._last_tweet_at}",
             f"累计转发: {self._forwarded_count} 条",
@@ -238,19 +288,93 @@ class XForwardPlugin(Star):
                 logger.error(f"[X Forward] 向 {umo} 发送测试消息失败: {e}")
         yield event.plain_result(f"已向 {len(self._subs)} 个会话发送测试消息。")
 
+    # ---------------- X 端订阅查询 ----------------
+
+    def _auth_ctx(self) -> tuple[str, str | None]:
+        token = (self.config.get("bearer_token") or "").strip()
+        if not token:
+            raise RuntimeError("未配置 Bearer Token")
+        proxy = (self.config.get("proxy") or "").strip() or None
+        return token, proxy
+
+    async def _fetch_remote_subscriptions(self) -> tuple[str, list[dict]]:
+        """查询 X 端配置的订阅。
+
+        activity 模式返回 Event subscriptions (GET /2/activity/subscriptions)，
+        filtered 模式返回流规则 (GET /2/tweets/search/stream/rules)。
+        统一为 {id, type, content, tag} 列表。
+        """
+        mode = self._stream_mode()
+        token, proxy = self._auth_ctx()
+        headers = {"Authorization": f"Bearer {token}"}
+        timeout = aiohttp.ClientTimeout(total=30)
+        items: list[dict] = []
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            if mode == "activity":
+                params: dict = {"max_results": "1000"}
+                while True:
+                    async with session.get(
+                        ACTIVITY_SUBSCRIPTIONS_URL, headers=headers, params=params, proxy=proxy
+                    ) as resp:
+                        body = await resp.json(content_type=None)
+                        if resp.status != 200:
+                            detail = body.get("detail") or body.get("title") or str(body)[:300]
+                            raise RuntimeError(f"HTTP {resp.status}: {detail}")
+                        for s in body.get("data", []):
+                            flt = s.get("filter") or {}
+                            parts = []
+                            if flt.get("user_id"):
+                                parts.append(f"user_id={flt['user_id']}")
+                            if flt.get("keyword"):
+                                parts.append(f"keyword={flt['keyword']}")
+                            if flt.get("direction"):
+                                parts.append(f"direction={flt['direction']}")
+                            items.append(
+                                {
+                                    "id": s.get("subscription_id", ""),
+                                    "type": s.get("event_type", ""),
+                                    "content": ", ".join(parts) or "-",
+                                    "tag": s.get("tag", ""),
+                                }
+                            )
+                        next_token = (body.get("meta") or {}).get("next_token")
+                        if not next_token:
+                            break
+                        params["pagination_token"] = next_token
+            else:
+                async with session.get(
+                    FILTERED_RULES_URL, headers=headers, proxy=proxy
+                ) as resp:
+                    body = await resp.json(content_type=None)
+                    if resp.status != 200:
+                        detail = body.get("detail") or body.get("title") or str(body)[:300]
+                        raise RuntimeError(f"HTTP {resp.status}: {detail}")
+                    for r in body.get("data", []):
+                        items.append(
+                            {
+                                "id": r.get("id", ""),
+                                "type": "rule",
+                                "content": r.get("value", ""),
+                                "tag": r.get("tag", ""),
+                            }
+                        )
+        return mode, items
+
     # ---------------- 流式连接 ----------------
 
-    def _build_params(self) -> dict:
-        params = {
-            "tweet.fields": self.config.get(
-                "tweet_fields", "id,text,created_at,author_id,attachments,referenced_tweets"
-            ),
-            "expansions": self.config.get(
-                "expansions", "author_id,attachments.media_keys"
-            ),
-            "user.fields": self.config.get("user_fields", "name,username"),
-            "media.fields": self.config.get("media_fields", "type,url,preview_image_url"),
-        }
+    def _build_params(self, mode: str) -> dict:
+        params: dict = {}
+        if mode == "filtered":
+            params = {
+                "tweet.fields": self.config.get(
+                    "tweet_fields", "id,text,created_at,author_id,attachments,referenced_tweets"
+                ),
+                "expansions": self.config.get(
+                    "expansions", "author_id,attachments.media_keys"
+                ),
+                "user.fields": self.config.get("user_fields", "name,username"),
+                "media.fields": self.config.get("media_fields", "type,url,preview_image_url"),
+            }
         backfill = int(self.config.get("backfill_minutes", 0) or 0)
         if backfill > 0:
             params["backfill_minutes"] = str(min(backfill, 5))
@@ -285,7 +409,7 @@ class XForwardPlugin(Star):
                     self._status = f"认证失败 (HTTP {e.status})"
                     logger.error(
                         f"[X Forward] 认证失败 (HTTP {e.status})，请检查 Bearer Token "
-                        f"以及开发者套餐是否包含 Filtered Stream 权限，10 分钟后重试"
+                        f"以及开发者套餐权限，10 分钟后重试"
                     )
                     await asyncio.sleep(600)
                 elif e.status == 402:
@@ -316,11 +440,13 @@ class XForwardPlugin(Star):
                 await asyncio.sleep(30)
 
     async def _connect_and_consume(self, token: str, proxy: str | None):
+        mode = self._stream_mode()
+        url = ACTIVITY_STREAM_URL if mode == "activity" else FILTERED_STREAM_URL
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=SOCK_READ_TIMEOUT)
         headers = {"Authorization": f"Bearer {token}"}
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(
-                STREAM_URL, headers=headers, params=self._build_params(), proxy=proxy
+                url, headers=headers, params=self._build_params(mode), proxy=proxy
             ) as resp:
                 if resp.status != 200:
                     body = (await resp.text())[:500]
@@ -328,8 +454,8 @@ class XForwardPlugin(Star):
                     raise aiohttp.ClientResponseError(
                         resp.request_info, resp.history, status=resp.status, message=body
                     )
-                self._status = "已连接"
-                logger.info("[X Forward] Filtered Stream 已连接，等待推文...")
+                self._status = f"已连接 ({mode})"
+                logger.info(f"[X Forward] {url} 已连接，等待事件...")
                 async for raw_line in resp.content:
                     line = raw_line.strip()
                     if not line:
@@ -339,12 +465,31 @@ class XForwardPlugin(Star):
                     except json.JSONDecodeError:
                         logger.warning(f"[X Forward] 收到无法解析的数据: {line[:200]!r}")
                         continue
-                    if "data" in payload:
-                        await self._handle_tweet(payload)
-                    elif "errors" in payload:
-                        logger.warning(f"[X Forward] 流内错误事件: {payload['errors']}")
+                    await self._dispatch(mode, payload)
         logger.info("[X Forward] 服务端断开连接，准备重连")
         self._status = "连接断开，重连中"
+
+    async def _dispatch(self, mode: str, payload: dict):
+        if "errors" in payload and "data" not in payload:
+            logger.warning(f"[X Forward] 流内错误事件: {payload['errors']}")
+            return
+        data = payload.get("data")
+        if not data:
+            return
+        if mode == "activity":
+            event_type = data.get("event_type", "")
+            if event_type == "post.create":
+                tweet = data.get("payload") or {}
+                includes = data.get("includes") or payload.get("includes") or {}
+                await self._handle_tweet(tweet, includes, [])
+            elif event_type.startswith("post.delete"):
+                pass  # 暂不处理删除事件
+            elif event_type:
+                logger.info(f"[X Forward] 收到未处理的事件类型: {event_type}")
+        else:
+            await self._handle_tweet(
+                data, payload.get("includes", {}), payload.get("matching_rules", [])
+            )
 
     # ---------------- 推文处理 ----------------
 
@@ -357,18 +502,22 @@ class XForwardPlugin(Star):
             if "*" in subs or username in subs
         ]
 
-    async def _handle_tweet(self, payload: dict):
-        data = payload["data"]
-        tweet_id = data.get("id", "")
+    def _author_of(self, tweet: dict, includes: dict) -> tuple[str, str]:
+        """返回 (username, 显示名)。Activity 事件的 payload 自带 username"""
+        users = {u.get("id"): u for u in includes.get("users", [])}
+        author = users.get(tweet.get("author_id"), {})
+        username = tweet.get("username") or author.get("username", "")
+        name = author.get("name") or username
+        return username, name
+
+    async def _handle_tweet(self, tweet: dict, includes: dict, matching_rules: list):
+        tweet_id = tweet.get("id", "")
         if tweet_id and tweet_id in self._seen_ids:
             return  # 重连 backfill 可能产生重复
         if tweet_id:
             self._seen_ids.append(tweet_id)
 
-        includes = payload.get("includes", {})
-        users = {u["id"]: u for u in includes.get("users", [])}
-        author = users.get(data.get("author_id"), {})
-        username = author.get("username", "")
+        username, _ = self._author_of(tweet, includes)
         if not username:
             logger.warning(
                 f"[X Forward] 推文 {tweet_id} 缺少作者信息，仅发送给订阅了 * 的会话"
@@ -383,7 +532,7 @@ class XForwardPlugin(Star):
             logger.info(f"[X Forward] @{username or '?'} 的推文没有会话订阅，已忽略")
             return
 
-        chain = self._build_message(data, includes, payload.get("matching_rules", []))
+        chain = self._build_message(tweet, includes, matching_rules)
         for umo in targets:
             try:
                 await self.context.send_message(umo, chain)
@@ -391,22 +540,21 @@ class XForwardPlugin(Star):
             except Exception as e:
                 logger.error(f"[X Forward] 转发到 {umo} 失败: {e}")
 
-    def _build_message(self, data: dict, includes: dict, matching_rules: list) -> MessageChain:
-        users = {u["id"]: u for u in includes.get("users", [])}
-        author = users.get(data.get("author_id"), {})
-        username = author.get("username", "unknown")
-        name = author.get("name", username)
+    def _build_message(self, tweet: dict, includes: dict, matching_rules: list) -> MessageChain:
+        username, name = self._author_of(tweet, includes)
+        username = username or "unknown"
+        name = name or username
 
         ref_label = ""
-        for ref in data.get("referenced_tweets", []):
+        for ref in tweet.get("referenced_tweets", []):
             label = REF_TYPE_LABEL.get(ref.get("type"))
             if label:
                 ref_label = f"{label} | "
                 break
 
-        lines = [f"🐦 {ref_label}{name} (@{username})", "", data.get("text", "")]
+        lines = [f"🐦 {ref_label}{name} (@{username})", "", tweet.get("text", "")]
 
-        created_at = data.get("created_at")
+        created_at = tweet.get("created_at")
         if created_at:
             try:
                 local = datetime.fromisoformat(created_at.replace("Z", "+00:00")).astimezone()
@@ -418,13 +566,13 @@ class XForwardPlugin(Star):
         if tags:
             lines.append(f"🏷️ 命中规则: {', '.join(tags)}")
 
-        lines.append(f"🔗 https://x.com/{username}/status/{data.get('id', '')}")
+        lines.append(f"🔗 https://x.com/{username}/status/{tweet.get('id', '')}")
 
         chain = MessageChain().message("\n".join(lines))
 
         if self.config.get("send_media", True):
             media_map = {m["media_key"]: m for m in includes.get("media", []) if "media_key" in m}
-            for key in data.get("attachments", {}).get("media_keys", []):
+            for key in tweet.get("attachments", {}).get("media_keys", []):
                 media = media_map.get(key, {})
                 url = media.get("url") or media.get("preview_image_url")
                 if url:

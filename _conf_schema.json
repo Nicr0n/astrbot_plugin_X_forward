@@ -6,6 +6,13 @@
     "obvious_hint": true,
     "default": ""
   },
+  "stream_mode": {
+    "description": "流模式",
+    "type": "string",
+    "options": ["activity", "filtered"],
+    "hint": "activity: X Activity 事件流 (/2/activity/stream)，对应开发者控制台配置的 Event subscriptions（默认）；filtered: Filtered Stream (/2/tweets/search/stream)，基于规则表达式。",
+    "default": "activity"
+  },
   "proxy": {
     "description": "HTTP 代理地址（可选）",
     "type": "string",
@@ -27,13 +34,13 @@
   "tweet_fields": {
     "description": "tweet.fields 请求参数",
     "type": "string",
-    "hint": "高级选项：连接流时请求的推文字段，一般无需修改。",
+    "hint": "高级选项：仅 filtered 模式使用，一般无需修改。",
     "default": "id,text,created_at,author_id,attachments,referenced_tweets"
   },
   "expansions": {
     "description": "expansions 请求参数",
     "type": "string",
-    "hint": "高级选项：一般无需修改。",
+    "hint": "高级选项：仅 filtered 模式使用，一般无需修改。",
     "default": "author_id,attachments.media_keys"
   },
   "user_fields": {
