@@ -151,11 +151,11 @@ class XForwardPlugin(Star):
             tokens = tokens[tokens.index(subcmd) + 1 :]
         return [t.lstrip("@").lower() for t in tokens if t.lstrip("@")]
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command_group("xfwd")
     def xfwd(self):
         """X 推文转发插件管理指令"""
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("sub")
     async def sub(self, event: AstrMessageEvent):
         """为当前会话订阅 X 用户，例: /xfwd sub elonmusk NASA。订阅 * 表示接收全部"""
@@ -175,6 +175,7 @@ class XForwardPlugin(Star):
             f"注意: 用户需已包含在 X 开发者控制台配置的流规则中，本插件只做按会话分发。"
         )
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("unsub")
     async def unsub(self, event: AstrMessageEvent):
         """取消当前会话对某些 X 用户的订阅，例: /xfwd unsub elonmusk"""
@@ -196,6 +197,7 @@ class XForwardPlugin(Star):
             f"已取消订阅: {', '.join(removed) if removed else '（本会话未订阅这些用户）'}\n当前订阅: {remain}"
         )
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("list")
     async def list_subs(self, event: AstrMessageEvent):
         """查看当前会话订阅的 X 用户"""
@@ -205,6 +207,7 @@ class XForwardPlugin(Star):
         else:
             yield event.plain_result("本会话订阅的 X 用户:\n" + "\n".join(f"  - {u}" for u in subs))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("status")
     async def status(self, event: AstrMessageEvent):
         """查看流连接状态与所有会话的订阅情况"""
@@ -219,6 +222,7 @@ class XForwardPlugin(Star):
             lines.append(f"  - {umo}: {', '.join(subs)}")
         yield event.plain_result("\n".join(lines))
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("test")
     async def test(self, event: AstrMessageEvent):
         """向所有有订阅的会话发送一条测试消息"""
