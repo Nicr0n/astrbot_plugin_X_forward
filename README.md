@@ -27,9 +27,11 @@
 | `/xfwd sub <用户名> [用户名...]` | 所有人 | 为**当前会话**订阅 X 用户（@handle，不含 @），用户必须已在某条流规则的 `from:` 条件中；订阅 `*` 表示接收流中全部推文 |
 | `/xfwd unsub <用户名> [用户名...]` | 所有人 | 取消当前会话对某些用户的订阅 |
 | `/xfwd status` | 所有人 | 查看流连接状态、累计转发数和所有会话的订阅情况 |
-| `/xfwd list` | 管理员 | 查看当前会话的订阅名单（标注已失效的订阅） |
-| `/xfwd rules` | 管理员 | 查看 X 上配置的全部流规则（`GET /2/tweets/search/stream/rules`） |
+| `/xfwd list` | 所有人 | 查看当前会话的订阅名单（标注已失效的订阅） |
+| `/xfwd rules` | 所有人 | 查看 X 上配置的全部流规则（`GET /2/tweets/search/stream/rules`） |
 | `/xfwd test` | 管理员 | 向所有有订阅的会话发送测试消息 |
+
+新增/删除流规则等管理操作均在 WebUI 插件页面完成（需登录管理面板）。
 
 订阅数据保存在 `data/plugin_data/astrbot_plugin_X_forward/subscriptions.json`，重启不丢失。
 

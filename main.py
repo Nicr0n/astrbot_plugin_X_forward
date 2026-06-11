@@ -33,7 +33,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.8.1",
+    "v0.1",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -316,7 +316,6 @@ class XForwardPlugin(Star):
             f"已取消订阅: {', '.join(removed) if removed else '（本会话未订阅这些用户）'}\n当前订阅: {remain}"
         )
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("list")
     async def list_subs(self, event: AstrMessageEvent):
         """查看当前会话订阅的 X 用户（标注已失效的订阅）"""
@@ -335,7 +334,6 @@ class XForwardPlugin(Star):
             lines.append(f"  - {u}{'（规则中已无此用户，订阅失效）' if stale else ''}")
         yield event.plain_result("\n".join(lines))
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("rules")
     async def rules(self, event: AstrMessageEvent):
         """查看 X 上配置的 Filtered Stream 规则"""
