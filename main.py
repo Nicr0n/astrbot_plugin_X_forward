@@ -33,7 +33,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.8.0",
+    "v1.8.1",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -255,7 +255,6 @@ class XForwardPlugin(Star):
     def xfwd(self):
         """X 推文转发插件管理指令"""
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("sub")
     async def sub(self, event: AstrMessageEvent):
         """为当前会话订阅 X 用户，例: /xfwd sub elonmusk NASA。订阅 * 表示接收全部"""
@@ -268,11 +267,15 @@ class XForwardPlugin(Star):
             )
             return
         try:
-            valid = await self._valid_from_users(force=True)
+            valid = await self._valid_from_users()
+            invalid = [u for u in usernames if u != "*" and u not in valid]
+            if invalid:
+                # 缓存未命中时强制刷新一次，避免规则刚加完订阅被误拒
+                valid = await self._valid_from_users(force=True)
+                invalid = [u for u in usernames if u != "*" and u not in valid]
         except Exception as e:
             yield event.plain_result(f"无法获取流规则以校验订阅，请稍后重试: {e}")
             return
-        invalid = [u for u in usernames if u != "*" and u not in valid]
         if invalid:
             valid_hint = ", ".join(sorted(valid)) or "（无）"
             yield event.plain_result(
@@ -292,7 +295,6 @@ class XForwardPlugin(Star):
             f"当前订阅: {', '.join(self._subs[umo])}"
         )
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("unsub")
     async def unsub(self, event: AstrMessageEvent):
         """取消当前会话对某些 X 用户的订阅，例: /xfwd unsub elonmusk"""
@@ -352,7 +354,6 @@ class XForwardPlugin(Star):
             lines.append(f"    id: {r.get('id', '')}")
         yield event.plain_result("\n".join(lines))
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("status")
     async def status(self, event: AstrMessageEvent):
         """查看流连接状态与所有会话的订阅情况"""
