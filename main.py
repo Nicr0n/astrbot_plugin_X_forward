@@ -102,6 +102,7 @@ class XForwardPlugin(Star):
         day = datetime.now().strftime("%Y-%m-%d")
         daily: dict = self._usage.setdefault("daily", {}).setdefault(day, {})
         daily["_total"] = daily.get("_total", 0) + 1
+        self._usage["lifetime_total"] = int(self._usage.get("lifetime_total", 0) or 0) + 1
         for r in matching_rules:
             rid = str(r.get("id", "")).strip()
             if not rid:
@@ -127,6 +128,32 @@ class XForwardPlugin(Star):
         week_n = sum(v.get("_total", 0) for k, v in daily.items() if k in week_days)
         month_n = sum(v.get("_total", 0) for k, v in daily.items() if k.startswith(month_prefix))
         return day_n, week_n, month_n
+
+    def _credits_estimate(self) -> dict | None:
+        """估算剩余 credits = 基准余额 − 基准之后接收条数 × 单价。
+
+        X API 未提供 credits 余额查询端点，需在配置中填入控制台显示的
+        余额与单价；配置中的余额每次变更即作为新的计算基准。未配置返回 None
+        """
+        try:
+            balance = float(self.config.get("credits_balance", 0) or 0)
+            price = float(self.config.get("credit_cost_per_post", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if balance <= 0:
+            return None
+        lifetime = int(self._usage.get("lifetime_total", 0) or 0)
+        base = self._usage.get("baseline") or {}
+        if base.get("balance") != balance:
+            base = {"balance": balance, "total": lifetime}
+            self._usage["baseline"] = base
+            self._save_usage()
+        consumed = max(lifetime - int(base.get("total", 0) or 0), 0)
+        return {
+            "remaining": balance - consumed * price,
+            "consumed_posts": consumed,
+            "price": price,
+        }
 
     async def _fetch_quota(self) -> dict | None:
         """查询本月 Post 用量与上限 (GET /2/usage/tweets)，缓存 10 分钟。失败返回 None"""
@@ -212,6 +239,7 @@ class XForwardPlugin(Star):
                 "forwarded_count": self._forwarded_count,
                 "subscriptions": self._subs,
                 "quota": await self._fetch_quota(),
+                "credits": self._credits_estimate(),
             }
         )
 
@@ -224,6 +252,7 @@ class XForwardPlugin(Star):
                 "daily": self._usage.get("daily", {}),
                 "tags": self._usage.get("tags", {}),
                 "quota": await self._fetch_quota(),
+                "credits": self._credits_estimate(),
             }
         )
 
@@ -469,6 +498,9 @@ class XForwardPlugin(Star):
         quota = await self._fetch_quota()
         if quota:
             lines.append(f"剩余额度: {quota['remaining']:,} 条 Post")
+        credits = self._credits_estimate()
+        if credits:
+            lines.append(f"剩余 Credits: ~{credits['remaining']:,.2f}（估算）")
         yield event.plain_result("\n".join(lines))
 
     @xfwd.command("status")
@@ -478,10 +510,17 @@ class XForwardPlugin(Star):
         quota_line = (
             f"剩余额度: {quota['remaining']:,} 条 Post" if quota else "剩余额度: 查询失败"
         )
+        credits = self._credits_estimate()
+        credits_line = (
+            f"剩余 Credits: ~{credits['remaining']:,.2f}（估算）"
+            if credits
+            else "剩余 Credits: 未配置（请在插件配置填入控制台余额与单价）"
+        )
         lines = [
             "X 转发插件状态",
             f"连接状态: {self._status}",
             quota_line,
+            credits_line,
             f"最近收到推文: {self._last_tweet_at}",
             f"累计转发: {self._forwarded_count} 条",
             f"订阅会话: {len(self._subs)} 个",

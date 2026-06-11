@@ -24,6 +24,18 @@
     "hint": "重连时回补最近 N 分钟内错过的推文，需要 Pro 及以上套餐，0 表示关闭。",
     "default": 0
   },
+  "credits_balance": {
+    "description": "Credits 余额基准",
+    "type": "float",
+    "hint": "X API 未提供余额查询端点，请填入开发者控制台当前显示的 credits 余额。保存后即以此为基准，结合接收条数与单价估算剩余 credits；余额变动（如充值）后在此更新即可重置基准。0 表示不启用。",
+    "default": 0
+  },
+  "credit_cost_per_post": {
+    "description": "每条 Post 的 credits 单价",
+    "type": "float",
+    "hint": "开发者控制台标注的流式投递每条 Post 单价，用于剩余 credits 估算。",
+    "default": 0
+  },
   "debug_raw": {
     "description": "调试：打印流中原始事件",
     "type": "bool",

@@ -104,6 +104,7 @@
     <div class="card"><div class="label">累计转发</div><div class="value" id="stat-count">-</div></div>
     <div class="card"><div class="label">订阅会话数</div><div class="value" id="stat-sessions">-</div></div>
     <div class="card"><div class="label">剩余额度 (Post)</div><div class="value" id="stat-quota">-</div></div>
+    <div class="card"><div class="label">剩余 Credits (估算)</div><div class="value" id="stat-credits">-</div></div>
   </div>
 
   <div class="section">
@@ -467,6 +468,11 @@
     return q.remaining.toLocaleString();
   }
 
+  function creditsText(c) {
+    if (!c) return "未配置";
+    return "~" + Number(c.remaining).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
   async function refresh() {
     try {
       const d = unwrap(await bridge.apiGet("overview"));
@@ -474,6 +480,7 @@
       $("stat-last").textContent = d.last_tweet_at ?? "-";
       $("stat-count").textContent = d.forwarded_count ?? 0;
       $("stat-quota").textContent = quotaText(d.quota);
+      $("stat-credits").textContent = creditsText(d.credits);
       renderSubs(d.subscriptions);
     } catch (e) {
       toast("加载失败: " + e, true);
@@ -558,6 +565,7 @@
       if (d && d.ok === false) throw d.message || "未知错误";
       renderUsage(d || {});
       if (d && d.quota) $("stat-quota").textContent = quotaText(d.quota);
+      if (d && d.credits) $("stat-credits").textContent = creditsText(d.credits);
     } catch (e) {
       $("usage-chart").innerHTML = '<span class="muted">加载失败: ' + ((e && e.message) || e) + "</span>";
     }
