@@ -629,23 +629,10 @@ class XForwardPlugin(Star):
                 ref_label = f"{label} | "
                 break
 
-        lines = [f"🐦 {ref_label}{name} (@{username})", "", tweet.get("text", "")]
-
-        created_at = tweet.get("created_at")
-        if created_at:
-            try:
-                local = datetime.fromisoformat(created_at.replace("Z", "+00:00")).astimezone()
-                lines += ["", f"🕒 {local.strftime('%Y-%m-%d %H:%M:%S')}"]
-            except ValueError:
-                pass
-
-        tags = [r["tag"] for r in matching_rules if r.get("tag")]
-        if tags:
-            lines.append(f"🏷️ 命中规则: {', '.join(tags)}")
-
-        lines.append(f"🔗 https://x.com/{username}/status/{tweet.get('id', '')}")
-
-        chain = MessageChain().message("\n".join(lines))
+        # 排版: 用户 / 空行 / 正文 / 图片 / 空行 / 时间 / 原文链接
+        chain = MessageChain().message(
+            f"🐦 {ref_label}{name} (@{username})\n\n{tweet.get('text', '')}"
+        )
 
         if self.config.get("send_media", True):
             media_map = {m["media_key"]: m for m in includes.get("media", []) if "media_key" in m}
@@ -654,4 +641,15 @@ class XForwardPlugin(Star):
                 url = media.get("url") or media.get("preview_image_url")
                 if url:
                     chain.url_image(url)
+
+        footer = ""
+        created_at = tweet.get("created_at")
+        if created_at:
+            try:
+                local = datetime.fromisoformat(created_at.replace("Z", "+00:00")).astimezone()
+                footer += f"🕒 {local.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            except ValueError:
+                pass
+        footer += f"🔗 https://x.com/{username}/status/{tweet.get('id', '')}"
+        chain.message(f"\n\n{footer}")
         return chain
