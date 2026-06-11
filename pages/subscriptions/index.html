@@ -149,7 +149,7 @@
       </div>
       <div class="field">
         <label>标签 (tag)</label>
-        <input type="text" id="rb-tag" placeholder="可选，便于识别该规则，会随推文一起显示" />
+        <input type="text" id="rb-tag" placeholder="推荐填写（建议不含空格）：群聊可通过 /xfwd sub <tag> 按标签订阅该规则命中的推文" />
       </div>
       <div class="preview-row">
         <input type="text" id="rule-preview" placeholder="规则预览，可在此手动微调后提交" />
@@ -163,7 +163,7 @@
   <div class="section">
     <h2>各会话订阅名单</h2>
     <table>
-      <thead><tr><th style="width:40%">会话 (unified_msg_origin)</th><th>订阅的 X 用户</th><th style="width:90px">操作</th></tr></thead>
+      <thead><tr><th style="width:40%">会话 (unified_msg_origin)</th><th>订阅的 X 用户 / 规则 tag</th><th style="width:90px">操作</th></tr></thead>
       <tbody id="subs-body">
         <tr><td colspan="3" class="muted">加载中...</td></tr>
       </tbody>
@@ -174,10 +174,10 @@
     <h2>添加订阅</h2>
     <form id="add-form">
       <input class="umo-input" id="add-umo" placeholder="会话标识，如 aiocqhttp:GroupMessage:123456（建议从上表复制，或在群里用 /xfwd sub）" required />
-      <input class="users-input" id="add-users" placeholder="用户名，空格/逗号分隔，* 表示全部" required />
+      <input class="users-input" id="add-users" placeholder="用户名或规则 tag，空格/逗号分隔，* 表示全部" required />
       <button type="submit" class="primary">添加</button>
     </form>
-    <p class="muted">注意：订阅的用户必须已包含在 X 开发者控制台配置的流规则中，本插件只负责按会话分发。</p>
+    <p class="muted">推文的作者用户名或命中规则的 tag 匹配任一订阅项即转发到该会话。相关用户/标签需已有对应流规则（上方可新增），本插件只负责按会话分发。</p>
   </div>
 
   <div id="toast"></div>
@@ -239,7 +239,7 @@
       for (const u of users) {
         const chip = document.createElement("span");
         chip.className = "chip";
-        chip.textContent = u === "*" ? "＊ 全部" : "@" + u;
+        chip.textContent = u === "*" ? "＊ 全部" : u;
         const del = document.createElement("button");
         del.textContent = "✕";
         del.title = "取消该用户的订阅";
@@ -375,6 +375,10 @@
     const value = $("rule-preview").value.trim();
     if (!value) {
       toast("规则为空，请先填写条件", true);
+      return;
+    }
+    if (!$("rb-tag").value.trim() &&
+        !confirm("未填写标签 (tag)，群聊将无法按标签订阅这条规则（仍可按作者用户名订阅）。确定不加标签直接添加吗？")) {
       return;
     }
     try {

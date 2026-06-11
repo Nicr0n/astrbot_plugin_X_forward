@@ -29,7 +29,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.6.0",
+    "v1.7.0",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -236,10 +236,13 @@ class XForwardPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("sub")
     async def sub(self, event: AstrMessageEvent):
-        """为当前会话订阅 X 用户，例: /xfwd sub elonmusk NASA。订阅 * 表示接收全部"""
+        """为当前会话订阅 X 用户或规则 tag，例: /xfwd sub elonmusk 科技新闻。订阅 * 表示接收全部"""
         usernames = self._parse_usernames(event, "sub")
         if not usernames:
-            yield event.plain_result("用法: /xfwd sub <用户名> [用户名...]\n用户名为 X 的 @handle（不含 @），订阅 * 表示接收流中的全部推文。")
+            yield event.plain_result(
+                "用法: /xfwd sub <用户名或规则tag> [更多...]\n"
+                "可填 X 用户名（@handle，不含 @）或流规则的 tag（按标签路由），订阅 * 表示接收流中的全部推文。"
+            )
             return
         umo = event.unified_msg_origin
         subs = set(self._subs.get(umo, []))
@@ -250,7 +253,8 @@ class XForwardPlugin(Star):
         yield event.plain_result(
             f"已为本会话新增订阅: {', '.join(added) if added else '（均已存在）'}\n"
             f"当前订阅: {', '.join(self._subs[umo])}\n"
-            f"注意: 用户需已包含在流规则中（如 from:用户名），可用 /xfwd rules 查看。"
+            f"注意: 推文作者用户名或命中规则的 tag 匹配任一订阅项即转发，"
+            f"相关用户/标签需已配置流规则，可用 /xfwd rules 查看。"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -278,12 +282,14 @@ class XForwardPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("list")
     async def list_subs(self, event: AstrMessageEvent):
-        """查看当前会话订阅的 X 用户"""
+        """查看当前会话订阅的 X 用户 / 规则 tag"""
         subs = self._subs.get(event.unified_msg_origin, [])
         if not subs:
-            yield event.plain_result("本会话尚未订阅任何 X 用户，使用 /xfwd sub <用户名> 订阅。")
+            yield event.plain_result("本会话尚未订阅任何 X 用户或规则 tag，使用 /xfwd sub <用户名或tag> 订阅。")
         else:
-            yield event.plain_result("本会话订阅的 X 用户:\n" + "\n".join(f"  - {u}" for u in subs))
+            yield event.plain_result(
+                "本会话订阅的 X 用户 / 规则 tag:\n" + "\n".join(f"  - {u}" for u in subs)
+            )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("rules")
@@ -509,13 +515,13 @@ class XForwardPlugin(Star):
 
     # ---------------- 推文处理 ----------------
 
-    def _match_targets(self, username: str) -> list[str]:
-        """返回订阅了该作者（或订阅了 *）的会话列表"""
-        username = username.lower()
+    def _match_targets(self, keys: set[str]) -> list[str]:
+        """返回订阅了任一匹配键（作者用户名 / 规则 tag），或订阅了 * 的会话列表"""
+        keys = {k.lower() for k in keys if k}
         return [
             umo
             for umo, subs in self._subs.items()
-            if "*" in subs or username in subs
+            if "*" in subs or keys & set(subs)
         ]
 
     def _author_of(self, tweet: dict, includes: dict) -> tuple[str, str]:
@@ -534,18 +540,21 @@ class XForwardPlugin(Star):
             self._seen_ids.append(tweet_id)
 
         username, _ = self._author_of(tweet, includes)
-        if not username:
+        rule_tags = [r["tag"] for r in matching_rules if r.get("tag")]
+        keys = {username} | set(rule_tags)
+        if not username and not rule_tags:
             logger.warning(
-                f"[X Forward] 推文 {tweet_id} 缺少作者信息，仅发送给订阅了 * 的会话"
+                f"[X Forward] 推文 {tweet_id} 缺少作者信息且规则无 tag，仅发送给订阅了 * 的会话"
             )
 
-        targets = self._match_targets(username) if username else [
-            umo for umo, subs in self._subs.items() if "*" in subs
-        ]
+        targets = self._match_targets(keys)
 
         self._last_tweet_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not targets:
-            logger.info(f"[X Forward] @{username or '?'} 的推文没有会话订阅，已忽略")
+            logger.info(
+                f"[X Forward] @{username or '?'} 的推文（tag: {', '.join(rule_tags) or '无'}）"
+                f"没有会话订阅，已忽略"
+            )
             return
 
         chain = self._build_message(tweet, includes, matching_rules)
