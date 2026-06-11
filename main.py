@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections import deque
 from datetime import datetime
 
@@ -456,10 +457,25 @@ class XForwardPlugin(Star):
                     )
                 self._status = f"已连接 ({mode})"
                 logger.info(f"[X Forward] {url} 已连接，等待事件...")
+                debug_raw = bool(self.config.get("debug_raw", False))
+                keepalives = data_lines = 0
+                last_report = time.monotonic()
                 async for raw_line in resp.content:
+                    now = time.monotonic()
+                    if now - last_report >= 300:
+                        logger.info(
+                            f"[X Forward] 流存活: 最近 5 分钟 keep-alive {keepalives} 次, "
+                            f"数据行 {data_lines} 条"
+                        )
+                        keepalives = data_lines = 0
+                        last_report = now
                     line = raw_line.strip()
                     if not line:
+                        keepalives += 1
                         continue  # keep-alive 空行
+                    data_lines += 1
+                    if debug_raw:
+                        logger.info(f"[X Forward] RAW: {line[:2000]!r}")
                     try:
                         payload = json.loads(line)
                     except json.JSONDecodeError:

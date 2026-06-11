@@ -31,6 +31,12 @@
     "hint": "重连时回补最近 N 分钟内错过的推文，需要 Pro 及以上套餐，0 表示关闭。",
     "default": 0
   },
+  "debug_raw": {
+    "description": "调试：打印流中原始事件",
+    "type": "bool",
+    "hint": "开启后将每条收到的原始 JSON 记录到日志（INFO 级别），用于排查事件未转发的问题，定位完成后请关闭。",
+    "default": false
+  },
   "tweet_fields": {
     "description": "tweet.fields 请求参数",
     "type": "string",
