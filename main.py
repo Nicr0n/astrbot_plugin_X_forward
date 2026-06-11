@@ -288,6 +288,13 @@ class XForwardPlugin(Star):
                         f"以及开发者套餐是否包含 Filtered Stream 权限，10 分钟后重试"
                     )
                     await asyncio.sleep(600)
+                elif e.status == 402:
+                    self._status = "API 额度耗尽 (HTTP 402)"
+                    logger.error(
+                        "[X Forward] X API credits 已耗尽 (HTTP 402)，"
+                        "请前往 X 开发者控制台充值或升级套餐，30 分钟后重试"
+                    )
+                    await asyncio.sleep(1800)
                 elif e.status == 429:
                     self._status = "触发限流 (HTTP 429)"
                     logger.warning(f"[X Forward] 触发限流，{rate_backoff:.0f} 秒后重连")
