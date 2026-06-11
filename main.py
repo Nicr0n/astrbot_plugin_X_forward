@@ -26,6 +26,21 @@ SOCK_READ_TIMEOUT = 40
 # 从规则表达式中提取 from: 用户名（X 用户名为 1-15 位字母数字下划线）
 FROM_USER_RE = re.compile(r"\bfrom:@?(\w{1,15})", re.IGNORECASE)
 
+HELP_TEXT = (
+    "📖 X 推文转发插件指令:\n"
+    "/xfwd sub <用户名> [用户名...] — 为本会话订阅 X 用户（需已在流规则 from: 条件中），* 表示全部\n"
+    "/xfwd unsub <用户名> [用户名...] — 取消本会话的订阅\n"
+    "/xfwd list — 查看本会话订阅名单\n"
+    "/xfwd rules — 查看 X 上配置的流规则\n"
+    "/xfwd status — 查看连接状态、余额与订阅情况\n"
+    "/xfwd usage — 查看当日/本周/本月计费条数\n"
+    "/xfwd test — 向所有订阅会话发送测试消息（管理员）\n"
+    "/xfwd help — 显示本帮助\n"
+    "流规则的新增/删除请在 WebUI 插件页面操作。"
+)
+
+KNOWN_SUBCOMMANDS = {"sub", "unsub", "list", "rules", "status", "usage", "test", "help"}
+
 REF_TYPE_LABEL = {
     "retweeted": "🔁 转推",
     "quoted": "💬 引用",
@@ -528,6 +543,23 @@ class XForwardPlugin(Star):
         for umo, subs in self._subs.items():
             lines.append(f"  - {umo}: {', '.join(subs)}")
         yield event.plain_result("\n".join(lines))
+
+    @xfwd.command("help")
+    async def help_cmd(self, event: AstrMessageEvent):
+        """显示插件指令帮助"""
+        yield event.plain_result(HELP_TEXT)
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def xfwd_fallback(self, event: AstrMessageEvent):
+        """截获 /xfwd 开头但子指令缺失/不正确的消息，自动回复帮助"""
+        tokens = (event.message_str or "").strip().split()
+        if not tokens or tokens[0].lower() != "xfwd":
+            return
+        if len(tokens) > 1 and tokens[1].lower() in KNOWN_SUBCOMMANDS:
+            return  # 交给对应子指令处理
+        if not getattr(event, "is_at_or_wake_command", True):
+            return  # 未唤醒机器人的普通聊天不响应
+        yield event.plain_result(HELP_TEXT)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("test")
