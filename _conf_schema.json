@@ -1,0 +1,51 @@
+{
+  "bearer_token": {
+    "description": "X API Bearer Token（必填）",
+    "type": "string",
+    "hint": "在 X 开发者控制台 (developer.x.com) 的 App → Keys and tokens 页面生成的 OAuth 2.0 App-Only Bearer Token，用于连接 Filtered Stream。",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "proxy": {
+    "description": "HTTP 代理地址（可选）",
+    "type": "string",
+    "hint": "无法直连 api.x.com 时填写，例如 http://127.0.0.1:7890，留空则直连。",
+    "default": ""
+  },
+  "send_media": {
+    "description": "转发推文中的图片",
+    "type": "bool",
+    "hint": "开启后会附带推文中的图片（视频仅发送封面图）。",
+    "default": true
+  },
+  "backfill_minutes": {
+    "description": "断线回填分钟数（0-5）",
+    "type": "int",
+    "hint": "重连时回补最近 N 分钟内错过的推文，需要 Pro 及以上套餐，0 表示关闭。",
+    "default": 0
+  },
+  "tweet_fields": {
+    "description": "tweet.fields 请求参数",
+    "type": "string",
+    "hint": "高级选项：连接流时请求的推文字段，一般无需修改。",
+    "default": "id,text,created_at,author_id,attachments,referenced_tweets"
+  },
+  "expansions": {
+    "description": "expansions 请求参数",
+    "type": "string",
+    "hint": "高级选项：一般无需修改。",
+    "default": "author_id,attachments.media_keys"
+  },
+  "user_fields": {
+    "description": "user.fields 请求参数",
+    "type": "string",
+    "hint": "高级选项：一般无需修改。",
+    "default": "name,username"
+  },
+  "media_fields": {
+    "description": "media.fields 请求参数",
+    "type": "string",
+    "hint": "高级选项：一般无需修改。",
+    "default": "type,url,preview_image_url"
+  }
+}

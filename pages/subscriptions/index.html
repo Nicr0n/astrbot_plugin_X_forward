@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>X 推文转发 - 订阅管理</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1f2328; --muted: #6b7280;
+    --border: #e5e7eb; --accent: #1d9bf0; --danger: #ef4444; --chip: #eff6ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181c; --card: #1e2228; --text: #e6e6e6; --muted: #9ca3af;
+      --border: #313640; --chip: #1d2a3a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 18px; min-width: 150px;
+  }
+  .card .label { font-size: 12px; color: var(--muted); }
+  .card .value { font-size: 16px; font-weight: 600; margin-top: 4px; word-break: break-all; }
+  .section {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 16px;
+  }
+  .section h2 { font-size: 15px; margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  td.umo { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; max-width: 320px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; background: var(--chip);
+    border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px;
+    margin: 2px 4px 2px 0; font-size: 13px;
+  }
+  .chip button {
+    border: none; background: none; color: var(--muted); cursor: pointer;
+    font-size: 13px; padding: 0; line-height: 1;
+  }
+  .chip button:hover { color: var(--danger); }
+  .row-actions button, form button {
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px;
+  }
+  .row-actions button:hover { border-color: var(--danger); color: var(--danger); }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px;
+  }
+  input.umo-input { flex: 2; min-width: 260px; }
+  input.users-input { flex: 1; min-width: 180px; }
+  form button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .muted { color: var(--muted); font-size: 13px; }
+  #toast {
+    position: fixed; top: 16px; right: 16px; background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.15); display: none; font-size: 13px; z-index: 10;
+  }
+</style>
+</head>
+<body>
+  <h1>🐦 X 推文转发 — 订阅管理</h1>
+
+  <div class="cards">
+    <div class="card"><div class="label">连接状态</div><div class="value" id="stat-status">-</div></div>
+    <div class="card"><div class="label">最近收到推文</div><div class="value" id="stat-last">-</div></div>
+    <div class="card"><div class="label">累计转发</div><div class="value" id="stat-count">-</div></div>
+    <div class="card"><div class="label">订阅会话数</div><div class="value" id="stat-sessions">-</div></div>
+  </div>
+
+  <div class="section">
+    <h2>各会话订阅名单</h2>
+    <table>
+      <thead><tr><th style="width:40%">会话 (unified_msg_origin)</th><th>订阅的 X 用户</th><th style="width:90px">操作</th></tr></thead>
+      <tbody id="subs-body">
+        <tr><td colspan="3" class="muted">加载中...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>添加订阅</h2>
+    <form id="add-form">
+      <input class="umo-input" id="add-umo" placeholder="会话标识，如 aiocqhttp:GroupMessage:123456（建议从上表复制，或在群里用 /xfwd sub）" required />
+      <input class="users-input" id="add-users" placeholder="用户名，空格/逗号分隔，* 表示全部" required />
+      <button type="submit" class="primary">添加</button>
+    </form>
+    <p class="muted">注意：订阅的用户必须已包含在 X 开发者控制台配置的流规则中，本插件只负责按会话分发。</p>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+(async () => {
+  const bridge = window.AstrBotPluginPage;
+  const $ = (id) => document.getElementById(id);
+
+  function toast(msg, isErr) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.style.borderColor = isErr ? "var(--danger)" : "var(--border)";
+    t.style.display = "block";
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => (t.style.display = "none"), 3000);
+  }
+
+  if (!bridge) {
+    $("subs-body").innerHTML =
+      '<tr><td colspan="3" class="muted">未检测到 AstrBot 页面桥接 SDK，请确认 AstrBot 版本支持插件页面。</td></tr>';
+    return;
+  }
+  await bridge.ready();
+
+  const unwrap = (res) => (res && typeof res === "object" && "data" in res ? res.data : res);
+
+  function renderSubs(subs) {
+    const body = $("subs-body");
+    const entries = Object.entries(subs || {});
+    $("stat-sessions").textContent = entries.length;
+    if (!entries.length) {
+      body.innerHTML = '<tr><td colspan="3" class="muted">暂无订阅。可在群里发送 /xfwd sub &lt;用户名&gt;，或在下方手动添加。</td></tr>';
+      return;
+    }
+    body.innerHTML = "";
+    for (const [umo, users] of entries) {
+      const tr = document.createElement("tr");
+
+      const tdUmo = document.createElement("td");
+      tdUmo.className = "umo";
+      tdUmo.textContent = umo;
+
+      const tdUsers = document.createElement("td");
+      for (const u of users) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = u === "*" ? "＊ 全部" : "@" + u;
+        const del = document.createElement("button");
+        del.textContent = "✕";
+        del.title = "取消该用户的订阅";
+        del.onclick = () => unsubscribe(umo, u);
+        chip.appendChild(del);
+        tdUsers.appendChild(chip);
+      }
+
+      const tdAct = document.createElement("td");
+      tdAct.className = "row-actions";
+      const rm = document.createElement("button");
+      rm.textContent = "移除会话";
+      rm.onclick = () => {
+        if (confirm("移除该会话的全部订阅？\n" + umo)) unsubscribe(umo, "");
+      };
+      tdAct.appendChild(rm);
+
+      tr.append(tdUmo, tdUsers, tdAct);
+      body.appendChild(tr);
+    }
+  }
+
+  async function refresh() {
+    try {
+      const d = unwrap(await bridge.apiGet("overview"));
+      $("stat-status").textContent = d.status ?? "-";
+      $("stat-last").textContent = d.last_tweet_at ?? "-";
+      $("stat-count").textContent = d.forwarded_count ?? 0;
+      renderSubs(d.subscriptions);
+    } catch (e) {
+      toast("加载失败: " + e, true);
+    }
+  }
+
+  async function unsubscribe(umo, username) {
+    try {
+      const d = unwrap(await bridge.apiPost("unsubscribe", { umo, username }));
+      renderSubs(d.subscriptions);
+      toast("已更新");
+    } catch (e) {
+      toast("操作失败: " + e, true);
+    }
+  }
+
+  $("add-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      const d = unwrap(
+        await bridge.apiPost("subscribe", {
+          umo: $("add-umo").value.trim(),
+          usernames: $("add-users").value.trim(),
+        })
+      );
+      renderSubs(d.subscriptions);
+      $("add-users").value = "";
+      toast("已添加");
+    } catch (e) {
+      toast("添加失败: " + e, true);
+    }
+  });
+
+  await refresh();
+  setInterval(refresh, 30000);
+})();
+</script>
+</body>
+</html>

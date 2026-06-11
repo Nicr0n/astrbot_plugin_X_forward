@@ -1,14 +1,43 @@
-# astrbot-plugin-helloworld
+# astrbot_plugin_X_forward
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+订阅 [X API Filtered Stream](https://docs.x.com/x-api/posts/filtered-stream/introduction)，**按会话各自的订阅名单**将新推文转发到对应会话（QQ / Telegram / Discord 等 AstrBot 支持的平台）：每个群可以订阅不同的 X 用户，某个用户的推文只会发给订阅了 ta 的群。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+插件只维持一条流式连接并按作者分发，流规则（rules）请在 X 开发者控制台或通过 `POST /2/tweets/search/stream/rules` 提前配置好——群里订阅的用户必须已包含在流规则中（如 `from:user1 OR from:user2`），否则流里根本不会有 ta 的推文。
 
-# Supports
+## 配置
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+安装插件后，在 **AstrBot 管理面板 → 插件 → X 推文转发 → 插件配置** 中填写：
+
+| 配置项 | 说明 |
+| --- | --- |
+| `bearer_token` | **必填**。X 开发者控制台 App → Keys and tokens 页面生成的 OAuth 2.0 App-Only Bearer Token |
+| `proxy` | 可选。无法直连 `api.x.com` 时填写 HTTP 代理，如 `http://127.0.0.1:7890` |
+| `send_media` | 是否附带推文图片（视频发送封面图），默认开启 |
+| `backfill_minutes` | 断线重连时回补最近 N 分钟错过的推文（0-5，需 Pro 及以上套餐），默认关闭 |
+| `tweet_fields` 等 | 高级选项，自定义请求字段，一般无需修改 |
+
+保存配置后插件会自动重载并建立连接。
+
+## 使用
+
+以下指令均需要 AstrBot 管理员权限：
+
+| 指令 | 说明 |
+| --- | --- |
+| `/xfwd sub <用户名> [用户名...]` | 为**当前会话**订阅 X 用户（@handle，不含 @），订阅 `*` 表示接收流中全部推文 |
+| `/xfwd unsub <用户名> [用户名...]` | 取消当前会话对某些用户的订阅 |
+| `/xfwd list` | 查看当前会话的订阅名单 |
+| `/xfwd status` | 查看流连接状态、累计转发数和所有会话的订阅情况 |
+| `/xfwd test` | 向所有有订阅的会话发送测试消息 |
+
+订阅数据保存在 `data/plugin_data/astrbot_plugin_X_forward/subscriptions.json`，重启不丢失。
+
+### WebUI 订阅管理页
+
+在 **WebUI → 插件管理 → X 推文转发 → 插件详情 → Pages → subscriptions** 中可以可视化查看流连接状态和各会话的订阅名单，并直接添加 / 移除订阅（需要支持插件 Pages 的 AstrBot 版本）。
+
+## 行为说明
+
+- 流式连接每 20 秒收到一次 keep-alive，超过 40 秒无数据自动重连。
+- 按官方建议对不同错误退避重连：网络错误线性退避（最长 16s）、HTTP 5xx 指数退避（最长 320s）、HTTP 429 限流指数退避（最长 15min）；401/403 认证失败时每 10 分钟重试一次，请检查 Token。
+- 注意：Filtered Stream 需要 X API **Pro 及以上**套餐才能使用（Basic/Free 无此权限，连接会返回 403）。
