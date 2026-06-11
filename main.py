@@ -33,8 +33,8 @@ REF_TYPE_LABEL = {
 @register(
     "astrbot_plugin_X_forward",
     "Nicr0n",
-    "订阅 X Activity 事件流 / Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.3.0",
+    "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
+    "v1.4.0",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -70,8 +70,8 @@ class XForwardPlugin(Star):
             logger.error(f"[X Forward] 保存订阅数据失败: {e}")
 
     def _stream_mode(self) -> str:
-        mode = (self.config.get("stream_mode") or "activity").strip().lower()
-        return mode if mode in ("activity", "filtered") else "activity"
+        mode = (self.config.get("stream_mode") or "filtered").strip().lower()
+        return mode if mode in ("activity", "filtered") else "filtered"
 
     async def initialize(self):
         self._task = asyncio.create_task(self._stream_loop())

@@ -9,9 +9,9 @@
   "stream_mode": {
     "description": "流模式",
     "type": "string",
-    "options": ["activity", "filtered"],
-    "hint": "activity: X Activity 事件流 (/2/activity/stream)，对应开发者控制台配置的 Event subscriptions（默认）；filtered: Filtered Stream (/2/tweets/search/stream)，基于规则表达式。",
-    "default": "activity"
+    "options": ["filtered", "activity"],
+    "hint": "filtered（默认，推荐）: Filtered Stream (/2/tweets/search/stream)，基于规则表达式（如 from:user1 OR from:user2）；activity: X Activity 事件流 (/2/activity/stream)，实验性，经社区验证目前无法正常收到事件，不建议使用。",
+    "default": "filtered"
   },
   "proxy": {
     "description": "HTTP 代理地址（可选）",
