@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 from collections import deque
 from datetime import datetime
@@ -18,6 +19,9 @@ RULES_URL = "https://api.x.com/2/tweets/search/stream/rules"
 # 流式连接每 20 秒会收到一个空行 keep-alive，超过该时间没有任何数据则视为断线重连
 SOCK_READ_TIMEOUT = 40
 
+# 从规则表达式中提取 from: 用户名（X 用户名为 1-15 位字母数字下划线）
+FROM_USER_RE = re.compile(r"\bfrom:@?(\w{1,15})", re.IGNORECASE)
+
 REF_TYPE_LABEL = {
     "retweeted": "🔁 转推",
     "quoted": "💬 引用",
@@ -29,7 +33,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v1.7.0",
+    "v1.8.0",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -40,6 +44,9 @@ class XForwardPlugin(Star):
         self._status = "未启动"
         self._last_tweet_at: str = "无"
         self._forwarded_count = 0
+
+        # 有效订阅索引缓存：规则中所有 from: 用户名（单调时钟时间戳, 集合）
+        self._from_users_cache: tuple[float, set[str]] = (0.0, set())
 
         self._data_dir = StarTools.get_data_dir(PLUGIN_NAME)
         self._subs_file = self._data_dir / "subscriptions.json"
@@ -152,6 +159,7 @@ class XForwardPlugin(Star):
             result = await self._modify_rules({"add": [rule]})
         except Exception as e:
             return jsonify({"ok": False, "message": str(e)}), 502
+        self._from_users_cache = (0.0, set())
         err = self._rule_op_errors(result)
         if err:
             return jsonify({"ok": False, "message": err}), 400
@@ -172,6 +180,7 @@ class XForwardPlugin(Star):
             result = await self._modify_rules({"delete": {"ids": ids}})
         except Exception as e:
             return jsonify({"ok": False, "message": str(e)}), 502
+        self._from_users_cache = (0.0, set())
         err = self._rule_op_errors(result)
         if err:
             return jsonify({"ok": False, "message": err}), 400
@@ -192,6 +201,19 @@ class XForwardPlugin(Star):
         usernames = [u.lstrip("@").strip().lower() for u in raw if u.lstrip("@").strip()]
         if not umo or not usernames:
             return jsonify({"ok": False, "message": "缺少会话标识或用户名"}), 400
+        try:
+            valid = await self._valid_from_users(force=True)
+        except Exception as e:
+            return jsonify({"ok": False, "message": f"无法获取流规则以校验订阅: {e}"}), 502
+        invalid = [u for u in usernames if u != "*" and u not in valid]
+        if invalid:
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": f"以下用户不在任何流规则的 from: 条件中，无法订阅: "
+                    f"{', '.join(invalid)}，请先为其新增规则",
+                }
+            ), 400
         subs = set(self._subs.get(umo, []))
         subs.update(usernames)
         self._subs[umo] = sorted(subs)
@@ -236,12 +258,27 @@ class XForwardPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("sub")
     async def sub(self, event: AstrMessageEvent):
-        """为当前会话订阅 X 用户或规则 tag，例: /xfwd sub elonmusk 科技新闻。订阅 * 表示接收全部"""
+        """为当前会话订阅 X 用户，例: /xfwd sub elonmusk NASA。订阅 * 表示接收全部"""
         usernames = self._parse_usernames(event, "sub")
         if not usernames:
             yield event.plain_result(
-                "用法: /xfwd sub <用户名或规则tag> [更多...]\n"
-                "可填 X 用户名（@handle，不含 @）或流规则的 tag（按标签路由），订阅 * 表示接收流中的全部推文。"
+                "用法: /xfwd sub <用户名> [用户名...]\n"
+                "用户名为 X 的 @handle（不含 @），必须已出现在某条流规则的 from: 条件中；"
+                "订阅 * 表示接收流中的全部推文。"
+            )
+            return
+        try:
+            valid = await self._valid_from_users(force=True)
+        except Exception as e:
+            yield event.plain_result(f"无法获取流规则以校验订阅，请稍后重试: {e}")
+            return
+        invalid = [u for u in usernames if u != "*" and u not in valid]
+        if invalid:
+            valid_hint = ", ".join(sorted(valid)) or "（无）"
+            yield event.plain_result(
+                f"以下用户不在任何流规则的 from: 条件中，无法订阅: {', '.join(invalid)}\n"
+                f"当前可订阅的用户: {valid_hint}\n"
+                f"请先在 WebUI 插件页面或开发者控制台为其添加规则（如 from:{invalid[0]}）。"
             )
             return
         umo = event.unified_msg_origin
@@ -252,9 +289,7 @@ class XForwardPlugin(Star):
         self._save_subs()
         yield event.plain_result(
             f"已为本会话新增订阅: {', '.join(added) if added else '（均已存在）'}\n"
-            f"当前订阅: {', '.join(self._subs[umo])}\n"
-            f"注意: 推文作者用户名或命中规则的 tag 匹配任一订阅项即转发，"
-            f"相关用户/标签需已配置流规则，可用 /xfwd rules 查看。"
+            f"当前订阅: {', '.join(self._subs[umo])}"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -282,14 +317,21 @@ class XForwardPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("list")
     async def list_subs(self, event: AstrMessageEvent):
-        """查看当前会话订阅的 X 用户 / 规则 tag"""
+        """查看当前会话订阅的 X 用户（标注已失效的订阅）"""
         subs = self._subs.get(event.unified_msg_origin, [])
         if not subs:
-            yield event.plain_result("本会话尚未订阅任何 X 用户或规则 tag，使用 /xfwd sub <用户名或tag> 订阅。")
-        else:
-            yield event.plain_result(
-                "本会话订阅的 X 用户 / 规则 tag:\n" + "\n".join(f"  - {u}" for u in subs)
-            )
+            yield event.plain_result("本会话尚未订阅任何 X 用户，使用 /xfwd sub <用户名> 订阅。")
+            return
+        valid: set[str] | None = None
+        try:
+            valid = await self._valid_from_users()
+        except Exception:
+            pass  # 校验失败时降级为纯列表展示
+        lines = ["本会话订阅的 X 用户:"]
+        for u in subs:
+            stale = valid is not None and u != "*" and u not in valid
+            lines.append(f"  - {u}{'（规则中已无此用户，订阅失效）' if stale else ''}")
+        yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @xfwd.command("rules")
@@ -363,6 +405,20 @@ class XForwardPlugin(Star):
                     detail = body.get("detail") or body.get("title") or str(body)[:300]
                     raise RuntimeError(f"HTTP {resp.status}: {detail}")
                 return body.get("data", [])
+
+    async def _valid_from_users(self, force: bool = False) -> set[str]:
+        """返回当前流规则中所有 from: 用户名（小写），作为可订阅的有效索引。缓存 60 秒"""
+        ts, cached = self._from_users_cache
+        if not force and time.monotonic() - ts < 60:
+            return cached
+        rules = await self._fetch_rules()
+        users = {
+            m.lower()
+            for r in rules
+            for m in FROM_USER_RE.findall(r.get("value", ""))
+        }
+        self._from_users_cache = (time.monotonic(), users)
+        return users
 
     async def _modify_rules(self, payload: dict) -> dict:
         """新增/删除流规则 (POST /2/tweets/search/stream/rules)"""
@@ -515,13 +571,13 @@ class XForwardPlugin(Star):
 
     # ---------------- 推文处理 ----------------
 
-    def _match_targets(self, keys: set[str]) -> list[str]:
-        """返回订阅了任一匹配键（作者用户名 / 规则 tag），或订阅了 * 的会话列表"""
-        keys = {k.lower() for k in keys if k}
+    def _match_targets(self, username: str) -> list[str]:
+        """返回订阅了该作者（或订阅了 *）的会话列表"""
+        username = username.lower()
         return [
             umo
             for umo, subs in self._subs.items()
-            if "*" in subs or keys & set(subs)
+            if "*" in subs or username in subs
         ]
 
     def _author_of(self, tweet: dict, includes: dict) -> tuple[str, str]:
@@ -540,21 +596,18 @@ class XForwardPlugin(Star):
             self._seen_ids.append(tweet_id)
 
         username, _ = self._author_of(tweet, includes)
-        rule_tags = [r["tag"] for r in matching_rules if r.get("tag")]
-        keys = {username} | set(rule_tags)
-        if not username and not rule_tags:
+        if not username:
             logger.warning(
-                f"[X Forward] 推文 {tweet_id} 缺少作者信息且规则无 tag，仅发送给订阅了 * 的会话"
+                f"[X Forward] 推文 {tweet_id} 缺少作者信息，仅发送给订阅了 * 的会话"
             )
 
-        targets = self._match_targets(keys)
+        targets = self._match_targets(username) if username else [
+            umo for umo, subs in self._subs.items() if "*" in subs
+        ]
 
         self._last_tweet_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not targets:
-            logger.info(
-                f"[X Forward] @{username or '?'} 的推文（tag: {', '.join(rule_tags) or '无'}）"
-                f"没有会话订阅，已忽略"
-            )
+            logger.info(f"[X Forward] @{username or '?'} 的推文没有会话订阅，已忽略")
             return
 
         chain = self._build_message(tweet, includes, matching_rules)

@@ -149,7 +149,7 @@
       </div>
       <div class="field">
         <label>标签 (tag)</label>
-        <input type="text" id="rb-tag" placeholder="推荐填写（建议不含空格）：群聊可通过 /xfwd sub <tag> 按标签订阅该规则命中的推文" />
+        <input type="text" id="rb-tag" placeholder="可选，便于识别该规则，会随转发的推文一起显示" />
       </div>
       <div class="preview-row">
         <input type="text" id="rule-preview" placeholder="规则预览，可在此手动微调后提交" />
@@ -163,7 +163,7 @@
   <div class="section">
     <h2>各会话订阅名单</h2>
     <table>
-      <thead><tr><th style="width:40%">会话 (unified_msg_origin)</th><th>订阅的 X 用户 / 规则 tag</th><th style="width:90px">操作</th></tr></thead>
+      <thead><tr><th style="width:40%">会话 (unified_msg_origin)</th><th>订阅的 X 用户</th><th style="width:90px">操作</th></tr></thead>
       <tbody id="subs-body">
         <tr><td colspan="3" class="muted">加载中...</td></tr>
       </tbody>
@@ -174,10 +174,11 @@
     <h2>添加订阅</h2>
     <form id="add-form">
       <input class="umo-input" id="add-umo" placeholder="完整会话ID，如 onebot:GroupMessage:123456" required />
-      <input class="users-input" id="add-users" placeholder="用户名或规则 tag，空格/逗号分隔，* 表示全部" required />
+      <input class="users-input" id="add-users" placeholder="用户名，空格/逗号分隔，* 表示全部" required />
       <button type="submit" class="primary">添加</button>
     </form>
-    <p class="muted">请填完整会话ID（如 <code>onebot:GroupMessage:123456</code>），可在目标会话发送 <code>/sid</code> 获取当前会话ID，或从上表复制。推文的作者用户名或命中规则的 tag 匹配任一订阅项即转发到该会话；相关用户/标签需已有对应流规则（上方可新增），本插件只负责按会话分发。</p>
+    <p class="muted">请填完整会话ID（如 <code>onebot:GroupMessage:123456</code>），可在目标会话发送 <code>/sid</code> 获取当前会话ID，或从上表复制。仅允许订阅已出现在流规则 <code>from:</code> 条件中的用户（提交时校验）。</p>
+    <p class="muted" id="valid-users">当前可订阅的用户: 加载中...</p>
   </div>
 
   <div id="toast"></div>
@@ -219,7 +220,33 @@
 
   const unwrap = (res) => (res && typeof res === "object" && "data" in res ? res.data : res);
 
+  // 有效订阅索引：流规则中所有 from: 用户名（小写）；null 表示尚未加载
+  let validFromUsers = null;
+  let lastSubs = null;
+
+  function extractFromUsers(rules) {
+    const users = new Set();
+    for (const r of rules) {
+      for (const m of (r.value || "").matchAll(/\bfrom:@?(\w{1,15})/gi)) {
+        users.add(m[1].toLowerCase());
+      }
+    }
+    return users;
+  }
+
+  function renderValidUsers() {
+    const el = $("valid-users");
+    if (!validFromUsers) {
+      el.textContent = "当前可订阅的用户: 加载中...";
+    } else if (!validFromUsers.size) {
+      el.textContent = "当前可订阅的用户: （无，请先在上方新增含 from: 条件的规则）";
+    } else {
+      el.textContent = "当前可订阅的用户: " + [...validFromUsers].sort().join(", ");
+    }
+  }
+
   function renderSubs(subs) {
+    lastSubs = subs;
     const body = $("subs-body");
     const entries = Object.entries(subs || {});
     $("stat-sessions").textContent = entries.length;
@@ -239,7 +266,12 @@
       for (const u of users) {
         const chip = document.createElement("span");
         chip.className = "chip";
-        chip.textContent = u === "*" ? "＊ 全部" : u;
+        const stale = validFromUsers && u !== "*" && !validFromUsers.has(u);
+        chip.textContent = (u === "*" ? "＊ 全部" : "@" + u) + (stale ? "（已失效）" : "");
+        if (stale) {
+          chip.style.borderColor = "var(--danger)";
+          chip.title = "流规则中已无该用户的 from: 条件，此订阅不会再收到推文";
+        }
         const del = document.createElement("button");
         del.textContent = "✕";
         del.title = "取消该用户的订阅";
@@ -260,6 +292,13 @@
       tr.append(tdUmo, tdUsers, tdAct);
       body.appendChild(tr);
     }
+  }
+
+  function applyRules(rules) {
+    validFromUsers = extractFromUsers(rules);
+    renderValidUsers();
+    if (lastSubs) renderSubs(lastSubs);
+    renderRules(rules);
   }
 
   function renderRules(rules) {
@@ -289,7 +328,7 @@
           const d = unwrap(await bridge.apiPost("rules_delete", { ids: [r.id] }));
           if (d && d.ok === false) throw d.message || "未知错误";
           toast("规则已删除");
-          if (d && d.rules) renderRules(d.rules);
+          if (d && d.rules) applyRules(d.rules);
           else refreshRules();
         } catch (e) {
           toast("删除失败: " + ((e && e.message) || e), true);
@@ -307,7 +346,7 @@
     try {
       const d = unwrap(await bridge.apiGet("rules"));
       if (d && d.ok === false) throw d.message || "未知错误";
-      renderRules((d && d.rules) || []);
+      applyRules((d && d.rules) || []);
     } catch (e) {
       const msg = (e && e.message) || e;
       body.innerHTML = "";
@@ -377,17 +416,13 @@
       toast("规则为空，请先填写条件", true);
       return;
     }
-    if (!$("rb-tag").value.trim() &&
-        !confirm("未填写标签 (tag)，群聊将无法按标签订阅这条规则（仍可按作者用户名订阅）。确定不加标签直接添加吗？")) {
-      return;
-    }
     try {
       const d = unwrap(
         await bridge.apiPost("rules_add", { value, tag: $("rb-tag").value.trim() })
       );
       if (d && d.ok === false) throw d.message || "未知错误";
       toast("规则已添加");
-      if (d && d.rules) renderRules(d.rules);
+      if (d && d.rules) applyRules(d.rules);
       else refreshRules();
     } catch (e) {
       toast("添加失败: " + ((e && e.message) || e), true);

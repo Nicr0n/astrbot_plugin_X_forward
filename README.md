@@ -1,6 +1,8 @@
 # astrbot_plugin_X_forward
 
-订阅 [X API Filtered Stream](https://docs.x.com/x-api/posts/filtered-stream/introduction)（`GET /2/tweets/search/stream`），**按会话各自的订阅名单**将新推文转发到对应会话（QQ / Telegram / Discord 等 AstrBot 支持的平台）：每个群可以订阅不同的 **X 用户名**或**流规则 tag**，推文的作者用户名或命中规则的 tag 匹配任一订阅项即转发到该群。
+订阅 [X API Filtered Stream](https://docs.x.com/x-api/posts/filtered-stream/introduction)（`GET /2/tweets/search/stream`），**按会话各自的订阅名单**将新推文转发到对应会话（QQ / Telegram / Discord 等 AstrBot 支持的平台）：每个群订阅不同的 X 用户，推文按**作者用户名**路由，只发给订阅了该作者的群。
+
+订阅以流规则中的 `from:` 用户为有效索引：订阅时实时解析所有规则中的 `from:用户名`，只允许订阅已被规则覆盖的用户（杜绝"订阅了但规则没覆盖、永远收不到推文"的静默失效）；规则被删除后，相关订阅会在 `/xfwd list` 和 WebUI 中标注为已失效。
 
 插件只维持一条流式连接并按作者分发——群里订阅的用户必须已包含在流规则中（如 `from:user1 OR from:user2`），否则流里根本不会有 ta 的推文。流规则可以直接在插件的 WebUI 页面中可视化增删，也可以在 X 开发者控制台配置。
 
@@ -24,9 +26,9 @@
 
 | 指令 | 说明 |
 | --- | --- |
-| `/xfwd sub <用户名或tag> [更多...]` | 为**当前会话**订阅 X 用户（@handle，不含 @）或流规则 tag，订阅 `*` 表示接收流中全部推文 |
-| `/xfwd unsub <用户名或tag> [更多...]` | 取消当前会话的某些订阅项 |
-| `/xfwd list` | 查看当前会话的订阅名单 |
+| `/xfwd sub <用户名> [用户名...]` | 为**当前会话**订阅 X 用户（@handle，不含 @），用户必须已在某条流规则的 `from:` 条件中；订阅 `*` 表示接收流中全部推文 |
+| `/xfwd unsub <用户名> [用户名...]` | 取消当前会话对某些用户的订阅 |
+| `/xfwd list` | 查看当前会话的订阅名单（标注已失效的订阅） |
 | `/xfwd rules` | 查看 X 上配置的全部流规则（`GET /2/tweets/search/stream/rules`） |
 | `/xfwd status` | 查看流连接状态、累计转发数和所有会话的订阅情况 |
 | `/xfwd test` | 向所有有订阅的会话发送测试消息 |
@@ -38,9 +40,9 @@
 在 **WebUI → 插件管理 → X 推文转发 → 插件详情 → Pages → subscriptions** 中可以（需要支持插件 Pages 的 AstrBot 版本）：
 
 - 查看流连接状态、X 上配置的全部流规则（规则表达式 / tag / ID）和各会话的订阅名单；
-- **可视化构建并新增流规则**：按"来自用户 / 关键词 / 话题标签 / 提及 / 语言 / 类型条件（排除转推、含媒体等）"分项填写，自动拼接成规则表达式（组间 AND、组内 OR），可在预览框手动微调后提交（`POST /2/tweets/search/stream/rules`）。建议同时填写 tag，群聊即可 `/xfwd sub <tag>` 按标签订阅该规则命中的推文；
+- **可视化构建并新增流规则**：按"来自用户 / 关键词 / 话题标签 / 提及 / 语言 / 类型条件（排除转推、含媒体等）"分项填写，自动拼接成规则表达式（组间 AND、组内 OR），可在预览框手动微调后提交（`POST /2/tweets/search/stream/rules`）；
 - 删除任意一条流规则；
-- 添加 / 移除会话订阅。
+- 添加 / 移除会话订阅：页面会列出当前可订阅的用户（规则中全部 `from:` 用户），添加时校验，规则删除后失效的订阅会标红提示。
 
 ## 行为说明
 
