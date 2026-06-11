@@ -1,11 +1,6 @@
 # astrbot_plugin_X_forward
 
-订阅 X API 实时事件流，**按会话各自的订阅名单**将新推文转发到对应会话（QQ / Telegram / Discord 等 AstrBot 支持的平台）：每个群可以订阅不同的 X 用户，某个用户的推文只会发给订阅了 ta 的群。
-
-支持两种流模式（`stream_mode` 配置项）：
-
-- **filtered**（默认，推荐）：[Filtered Stream](https://docs.x.com/x-api/posts/filtered-stream/introduction)（`GET /2/tweets/search/stream`），基于规则表达式（如 `from:user1 OR from:user2`）；
-- **activity**（实验性，不建议）：[X Activity API](https://docs.x.com/x-api/activity/introduction) 事件流（`GET /2/activity/stream`），对应控制台的 Event subscriptions。经实测及社区反馈，该流目前无法正常收到事件，仅保留代码以备将来可用。
+订阅 [X API Filtered Stream](https://docs.x.com/x-api/posts/filtered-stream/introduction)（`GET /2/tweets/search/stream`），**按会话各自的订阅名单**将新推文转发到对应会话（QQ / Telegram / Discord 等 AstrBot 支持的平台）：每个群可以订阅不同的 X 用户，某个用户的推文只会发给订阅了 ta 的群。
 
 插件只维持一条流式连接并按作者分发，流规则请在 X 开发者控制台或通过 `POST /2/tweets/search/stream/rules` 提前配置好——群里订阅的用户必须已包含在流规则中（如 `from:user1 OR from:user2`），否则流里根本不会有 ta 的推文。
 
@@ -16,7 +11,6 @@
 | 配置项 | 说明 |
 | --- | --- |
 | `bearer_token` | **必填**。X 开发者控制台 App → Keys and tokens 页面生成的 OAuth 2.0 App-Only Bearer Token |
-| `stream_mode` | `filtered`（默认，推荐）或 `activity`（实验性，目前不可用） |
 | `proxy` | 可选。无法直连 `api.x.com` 时填写 HTTP 代理，如 `http://127.0.0.1:7890` |
 | `send_media` | 是否附带推文图片（视频发送封面图），默认开启 |
 | `backfill_minutes` | 断线重连时回补最近 N 分钟错过的推文（0-5，需 Pro 及以上套餐），默认关闭 |
@@ -33,7 +27,7 @@
 | `/xfwd sub <用户名> [用户名...]` | 为**当前会话**订阅 X 用户（@handle，不含 @），订阅 `*` 表示接收流中全部推文 |
 | `/xfwd unsub <用户名> [用户名...]` | 取消当前会话对某些用户的订阅 |
 | `/xfwd list` | 查看当前会话的订阅名单 |
-| `/xfwd events` | 查看 X 端配置的订阅：filtered 模式查流规则（`GET /2/tweets/search/stream/rules`），activity 模式查 Event subscriptions |
+| `/xfwd rules` | 查看 X 上配置的全部流规则（`GET /2/tweets/search/stream/rules`） |
 | `/xfwd status` | 查看流连接状态、累计转发数和所有会话的订阅情况 |
 | `/xfwd test` | 向所有有订阅的会话发送测试消息 |
 
@@ -41,7 +35,7 @@
 
 ### WebUI 订阅管理页
 
-在 **WebUI → 插件管理 → X 推文转发 → 插件详情 → Pages → subscriptions** 中可以可视化查看流连接状态、X 端配置的事件订阅（Event subscriptions，含订阅内容 / 事件类型 / tag / ID，filtered 模式下显示流规则）和各会话的订阅名单，并直接添加 / 移除会话订阅（需要支持插件 Pages 的 AstrBot 版本）。
+在 **WebUI → 插件管理 → X 推文转发 → 插件详情 → Pages → subscriptions** 中可以可视化查看流连接状态、X 上配置的全部流规则（规则表达式 / tag / ID）和各会话的订阅名单，并直接添加 / 移除会话订阅（需要支持插件 Pages 的 AstrBot 版本）。
 
 ## 行为说明
 
