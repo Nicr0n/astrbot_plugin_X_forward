@@ -15,6 +15,10 @@ PLUGIN_NAME = "astrbot_plugin_X_forward"
 
 STREAM_URL = "https://api.x.com/2/tweets/search/stream"
 RULES_URL = "https://api.x.com/2/tweets/search/stream/rules"
+USAGE_URL = "https://api.x.com/2/usage/tweets"
+
+# 本地用量记录保留天数
+USAGE_RETENTION_DAYS = 90
 
 # 流式连接每 20 秒会收到一个空行 keep-alive，超过该时间没有任何数据则视为断线重连
 SOCK_READ_TIMEOUT = 40
@@ -33,7 +37,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v0.1",
+    "v0.2",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -47,11 +51,17 @@ class XForwardPlugin(Star):
 
         # 有效订阅索引缓存：规则中所有 from: 用户名（单调时钟时间戳, 集合）
         self._from_users_cache: tuple[float, set[str]] = (0.0, set())
+        # 月度额度缓存 (单调时钟时间戳, 数据或 None)
+        self._quota_cache: tuple[float, dict | None] = (0.0, None)
 
         self._data_dir = StarTools.get_data_dir(PLUGIN_NAME)
         self._subs_file = self._data_dir / "subscriptions.json"
         # { unified_msg_origin: [username, ...] }，用户名统一小写；"*" 表示订阅全部
         self._subs: dict[str, list[str]] = self._load_subs()
+        self._usage_file = self._data_dir / "usage.json"
+        # {"daily": {"YYYY-MM-DD": {"_total": 当日总条数, "<规则ID>": 该规则命中条数}},
+        #  "tags": {"<规则ID>": 最近一次见到的 tag}}
+        self._usage: dict = self._load_usage()
 
         self._register_web_apis()
 
@@ -70,6 +80,77 @@ class XForwardPlugin(Star):
             )
         except Exception as e:
             logger.error(f"[X Forward] 保存订阅数据失败: {e}")
+
+    def _load_usage(self) -> dict:
+        try:
+            if self._usage_file.exists():
+                return json.loads(self._usage_file.read_text("utf-8"))
+        except Exception as e:
+            logger.error(f"[X Forward] 读取用量数据失败: {e}")
+        return {"daily": {}, "tags": {}}
+
+    def _save_usage(self):
+        try:
+            self._usage_file.write_text(
+                json.dumps(self._usage, ensure_ascii=False, indent=2), "utf-8"
+            )
+        except Exception as e:
+            logger.error(f"[X Forward] 保存用量数据失败: {e}")
+
+    def _record_usage(self, matching_rules: list):
+        """按规则 ID 记录本条推文的消耗（每条推文计入 _total 一次）"""
+        day = datetime.now().strftime("%Y-%m-%d")
+        daily: dict = self._usage.setdefault("daily", {}).setdefault(day, {})
+        daily["_total"] = daily.get("_total", 0) + 1
+        for r in matching_rules:
+            rid = str(r.get("id", "")).strip()
+            if not rid:
+                continue
+            daily[rid] = daily.get(rid, 0) + 1
+            if r.get("tag"):
+                self._usage.setdefault("tags", {})[rid] = r["tag"]
+        days = self._usage["daily"]
+        if len(days) > USAGE_RETENTION_DAYS:
+            for old in sorted(days)[: len(days) - USAGE_RETENTION_DAYS]:
+                days.pop(old, None)
+        self._save_usage()
+
+    def _cost_per_tweet(self) -> float:
+        try:
+            return float(self.config.get("credit_cost_per_tweet", 1.0) or 0)
+        except (TypeError, ValueError):
+            return 1.0
+
+    async def _fetch_quota(self) -> dict | None:
+        """查询本月 Post 用量与上限 (GET /2/usage/tweets)，缓存 10 分钟。失败返回 None"""
+        ts, cached = self._quota_cache
+        if time.monotonic() - ts < 600:
+            return cached
+        quota: dict | None = None
+        try:
+            token, proxy = self._auth_ctx()
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    USAGE_URL, headers={"Authorization": f"Bearer {token}"}, proxy=proxy
+                ) as resp:
+                    body = await resp.json(content_type=None)
+                    if resp.status != 200:
+                        detail = body.get("detail") or body.get("title") or str(body)[:200]
+                        raise RuntimeError(f"HTTP {resp.status}: {detail}")
+                    data = body.get("data", {})
+                    cap = int(data.get("project_cap", 0) or 0)
+                    used = int(data.get("project_usage", 0) or 0)
+                    quota = {
+                        "project_cap": cap,
+                        "project_usage": used,
+                        "remaining": max(cap - used, 0),
+                        "cap_reset_day": data.get("cap_reset_day"),
+                    }
+        except Exception as e:
+            logger.warning(f"[X Forward] 查询月度用量失败: {e}")
+        self._quota_cache = (time.monotonic(), quota)
+        return quota
 
     async def initialize(self):
         self._task = asyncio.create_task(self._stream_loop())
@@ -106,6 +187,9 @@ class XForwardPlugin(Star):
             self.context.register_web_api(
                 f"/{PLUGIN_NAME}/rules_delete", self._api_rules_delete, ["POST"], "删除流规则"
             )
+            self.context.register_web_api(
+                f"/{PLUGIN_NAME}/usage", self._api_usage, ["GET"], "用量与费用统计"
+            )
         except Exception as e:
             logger.warning(
                 f"[X Forward] 注册 WebUI 接口失败（AstrBot 版本可能不支持插件页面）: {e}"
@@ -120,6 +204,20 @@ class XForwardPlugin(Star):
                 "last_tweet_at": self._last_tweet_at,
                 "forwarded_count": self._forwarded_count,
                 "subscriptions": self._subs,
+                "quota": await self._fetch_quota(),
+            }
+        )
+
+    async def _api_usage(self):
+        from quart import jsonify
+
+        return jsonify(
+            {
+                "ok": True,
+                "daily": self._usage.get("daily", {}),
+                "tags": self._usage.get("tags", {}),
+                "cost_per_tweet": self._cost_per_tweet(),
+                "quota": await self._fetch_quota(),
             }
         )
 
@@ -355,9 +453,18 @@ class XForwardPlugin(Star):
     @xfwd.command("status")
     async def status(self, event: AstrMessageEvent):
         """查看流连接状态与所有会话的订阅情况"""
+        quota = await self._fetch_quota()
+        if quota:
+            quota_line = (
+                f"本月额度: 已用 {quota['project_usage']} / 上限 {quota['project_cap']}，"
+                f"剩余 {quota['remaining']} 条 Post"
+            )
+        else:
+            quota_line = "本月额度: 查询失败"
         lines = [
             "X 转发插件状态",
             f"连接状态: {self._status}",
+            quota_line,
             f"最近收到推文: {self._last_tweet_at}",
             f"累计转发: {self._forwarded_count} 条",
             f"订阅会话: {len(self._subs)} 个",
@@ -593,6 +700,8 @@ class XForwardPlugin(Star):
             return  # 重连 backfill 可能产生重复
         if tweet_id:
             self._seen_ids.append(tweet_id)
+
+        self._record_usage(matching_rules)
 
         username, _ = self._author_of(tweet, includes)
         if not username:

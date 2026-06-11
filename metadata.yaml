@@ -1,6 +1,6 @@
 name: astrbot_plugin_X_forward
 display_name: X 推文转发
 desc: 订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话。
-version: v0.1
+version: v0.2
 author: Nicr0n
 repo: https://github.com/Nicr0n/astrbot_plugin_X_forward
