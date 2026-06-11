@@ -36,7 +36,7 @@ HELP_TEXT = (
     "/xfwd usage — 查看当日/本周/本月计费条数\n"
     "/xfwd test — 向所有订阅会话发送测试消息（管理员）\n"
     "/xfwd help — 显示本帮助\n"
-    "流规则的新增/删除请在 WebUI 插件页面操作。"
+    "流规则的新增/删除由管理员在 WebUI 插件页面操作，需要添加规则（订阅新用户）请联系管理员。"
 )
 
 KNOWN_SUBCOMMANDS = {"sub", "unsub", "list", "rules", "status", "usage", "test", "help"}
@@ -429,7 +429,7 @@ class XForwardPlugin(Star):
             yield event.plain_result(
                 f"以下用户不在任何流规则的 from: 条件中，无法订阅: {', '.join(invalid)}\n"
                 f"当前可订阅的用户: {valid_hint}\n"
-                f"请先在 WebUI 插件页面或开发者控制台为其添加规则（如 from:{invalid[0]}）。"
+                f"如需订阅新用户，请联系管理员添加对应规则（如 from:{invalid[0]}）。"
             )
             return
         umo = event.unified_msg_origin
