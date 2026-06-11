@@ -103,23 +103,23 @@
     <div class="card"><div class="label">最近收到推文</div><div class="value" id="stat-last">-</div></div>
     <div class="card"><div class="label">累计转发</div><div class="value" id="stat-count">-</div></div>
     <div class="card"><div class="label">订阅会话数</div><div class="value" id="stat-sessions">-</div></div>
-    <div class="card"><div class="label">本月剩余额度 (Post)</div><div class="value" id="stat-quota">-</div></div>
+    <div class="card"><div class="label">剩余额度 (Post)</div><div class="value" id="stat-quota">-</div></div>
   </div>
 
   <div class="section">
     <h2 style="display:flex;align-items:center;gap:8px;">
-      费用统计
+      消费统计
       <button id="usage-refresh" style="border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:2px 10px;cursor:pointer;font-size:12px;">刷新</button>
     </h2>
-    <p class="muted" style="margin-top:0">最近 30 天每日费用（接收条数 × 单价 <span id="usage-unit">1</span>）</p>
+    <p class="muted" style="margin-top:0">最近 30 天每日计费条数（pay-as-you-go：每条投递的推文计费一次，单价见开发者控制台）</p>
     <div class="chart" id="usage-chart"><span class="muted">加载中...</span></div>
     <table style="margin-top:14px">
-      <thead><tr><th style="width:26%">规则 ID</th><th style="width:20%">标签 (tag)</th><th style="width:18%">累计接收</th><th style="width:18%">估算费用</th><th>状态</th></tr></thead>
+      <thead><tr><th style="width:30%">规则 ID</th><th style="width:24%">标签 (tag)</th><th style="width:20%">累计计费条数</th><th>状态</th></tr></thead>
       <tbody id="usage-body">
-        <tr><td colspan="5" class="muted">加载中...</td></tr>
+        <tr><td colspan="4" class="muted">加载中...</td></tr>
       </tbody>
     </table>
-    <p class="muted">按规则 ID 本地归因：每条到达的推文计入其命中的所有规则（多规则命中会重复计入各规则，当日总费用按推文条数只计一次）。数据持久化保存 90 天。</p>
+    <p class="muted">按规则 ID 本地归因：每条到达的推文计入其命中的所有规则（多规则命中会重复计入各规则明细，当日总数按推文条数只计一次）。数据持久化保存 90 天。</p>
   </div>
 
   <div class="section">
@@ -464,7 +464,7 @@
 
   function quotaText(q) {
     if (!q) return "查询失败";
-    return `${q.remaining.toLocaleString()} / ${q.project_cap.toLocaleString()}`;
+    return q.remaining.toLocaleString();
   }
 
   async function refresh() {
@@ -486,26 +486,23 @@
     `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 
   function renderUsage(d) {
-    const unit = Number(d.cost_per_tweet ?? 1);
-    $("usage-unit").textContent = unit;
     const daily = d.daily || {};
 
-    // 最近 30 天每日费用柱状图
+    // 最近 30 天每日计费条数柱状图
     const chart = $("usage-chart");
     chart.innerHTML = "";
     const days = [];
     for (let i = 29; i >= 0; i--) {
       days.push(fmtDay(new Date(Date.now() - i * 86400000)));
     }
-    const costs = days.map((day) => ((daily[day] || {})._total || 0) * unit);
-    const max = Math.max(...costs, 1);
+    const counts = days.map((day) => (daily[day] || {})._total || 0);
+    const max = Math.max(...counts, 1);
     for (let i = 0; i < days.length; i++) {
       const bar = document.createElement("div");
       bar.className = "bar";
-      bar.style.height = Math.round((costs[i] / max) * 100) + "%";
-      const count = (daily[days[i]] || {})._total || 0;
-      bar.title = `${days[i]}: 费用 ${costs[i]}（${count} 条）`;
-      if (!count) bar.style.background = "var(--border)";
+      bar.style.height = Math.round((counts[i] / max) * 100) + "%";
+      bar.title = `${days[i]}: ${counts[i]} 条`;
+      if (!counts[i]) bar.style.background = "var(--border)";
       chart.appendChild(bar);
     }
     let labels = document.getElementById("usage-chart-labels");
@@ -533,7 +530,7 @@
     const body = $("usage-body");
     const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
     if (!entries.length) {
-      body.innerHTML = '<tr><td colspan="5" class="muted">暂无数据，收到推文后开始统计。</td></tr>';
+      body.innerHTML = '<tr><td colspan="4" class="muted">暂无数据，收到推文后开始统计。</td></tr>';
       return;
     }
     body.innerHTML = "";
@@ -546,13 +543,11 @@
       tdTag.textContent = (d.tags || {})[rid] || "-";
       const tdN = document.createElement("td");
       tdN.textContent = n + " 条";
-      const tdCost = document.createElement("td");
-      tdCost.textContent = String(n * unit);
       const tdState = document.createElement("td");
       tdState.textContent = lastRules
         ? (lastRules.some((r) => String(r.id) === rid) ? "在用" : "已删除")
         : "-";
-      tr.append(tdId, tdTag, tdN, tdCost, tdState);
+      tr.append(tdId, tdTag, tdN, tdState);
       body.appendChild(tr);
     }
   }

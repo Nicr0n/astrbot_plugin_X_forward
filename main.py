@@ -3,7 +3,7 @@ import json
 import re
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiohttp
 
@@ -37,7 +37,7 @@ REF_TYPE_LABEL = {
     "astrbot_plugin_X_forward",
     "Nicr0n",
     "订阅 X Filtered Stream，按会话订阅名单将新推文转发到对应会话",
-    "v0.2",
+    "v0.3",
 )
 class XForwardPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -115,11 +115,18 @@ class XForwardPlugin(Star):
                 days.pop(old, None)
         self._save_usage()
 
-    def _cost_per_tweet(self) -> float:
-        try:
-            return float(self.config.get("credit_cost_per_tweet", 1.0) or 0)
-        except (TypeError, ValueError):
-            return 1.0
+    def _usage_counts(self) -> tuple[int, int, int]:
+        """返回 (今日, 本周, 本月) 的计费条数（本地统计，自然周从周一起算）"""
+        daily = self._usage.get("daily", {})
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        monday = now - timedelta(days=now.weekday())
+        week_days = {(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)}
+        month_prefix = now.strftime("%Y-%m")
+        day_n = daily.get(today, {}).get("_total", 0)
+        week_n = sum(v.get("_total", 0) for k, v in daily.items() if k in week_days)
+        month_n = sum(v.get("_total", 0) for k, v in daily.items() if k.startswith(month_prefix))
+        return day_n, week_n, month_n
 
     async def _fetch_quota(self) -> dict | None:
         """查询本月 Post 用量与上限 (GET /2/usage/tweets)，缓存 10 分钟。失败返回 None"""
@@ -216,7 +223,6 @@ class XForwardPlugin(Star):
                 "ok": True,
                 "daily": self._usage.get("daily", {}),
                 "tags": self._usage.get("tags", {}),
-                "cost_per_tweet": self._cost_per_tweet(),
                 "quota": await self._fetch_quota(),
             }
         )
@@ -450,17 +456,28 @@ class XForwardPlugin(Star):
             lines.append(f"    id: {r.get('id', '')}")
         yield event.plain_result("\n".join(lines))
 
+    @xfwd.command("usage")
+    async def usage(self, event: AstrMessageEvent):
+        """查看当日/本周/本月的消费条数"""
+        day_n, week_n, month_n = self._usage_counts()
+        lines = [
+            "X API 消费统计（每条投递的推文计费一次）",
+            f"今日: {day_n} 条",
+            f"本周: {week_n} 条",
+            f"本月: {month_n} 条",
+        ]
+        quota = await self._fetch_quota()
+        if quota:
+            lines.append(f"剩余额度: {quota['remaining']:,} 条 Post")
+        yield event.plain_result("\n".join(lines))
+
     @xfwd.command("status")
     async def status(self, event: AstrMessageEvent):
         """查看流连接状态与所有会话的订阅情况"""
         quota = await self._fetch_quota()
-        if quota:
-            quota_line = (
-                f"本月额度: 已用 {quota['project_usage']} / 上限 {quota['project_cap']}，"
-                f"剩余 {quota['remaining']} 条 Post"
-            )
-        else:
-            quota_line = "本月额度: 查询失败"
+        quota_line = (
+            f"剩余额度: {quota['remaining']:,} 条 Post" if quota else "剩余额度: 查询失败"
+        )
         lines = [
             "X 转发插件状态",
             f"连接状态: {self._status}",

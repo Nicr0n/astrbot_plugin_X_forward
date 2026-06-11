@@ -24,12 +24,6 @@
     "hint": "重连时回补最近 N 分钟内错过的推文，需要 Pro 及以上套餐，0 表示关闭。",
     "default": 0
   },
-  "credit_cost_per_tweet": {
-    "description": "每条推文的费用单价",
-    "type": "float",
-    "hint": "用于费用估算：每接收 1 条 Post 计多少费用/credits（按你的套餐定价填写），图表与统计按 接收条数×单价 计算。",
-    "default": 1.0
-  },
   "debug_raw": {
     "description": "调试：打印流中原始事件",
     "type": "bool",
