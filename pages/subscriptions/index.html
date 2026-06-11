@@ -173,11 +173,11 @@
   <div class="section">
     <h2>添加订阅</h2>
     <form id="add-form">
-      <input class="umo-input" id="add-umo" placeholder="会话标识，如 aiocqhttp:GroupMessage:123456（建议从上表复制，或在群里用 /xfwd sub）" required />
+      <input class="umo-input" id="add-umo" placeholder="完整会话ID，如 onebot:GroupMessage:123456" required />
       <input class="users-input" id="add-users" placeholder="用户名或规则 tag，空格/逗号分隔，* 表示全部" required />
       <button type="submit" class="primary">添加</button>
     </form>
-    <p class="muted">推文的作者用户名或命中规则的 tag 匹配任一订阅项即转发到该会话。相关用户/标签需已有对应流规则（上方可新增），本插件只负责按会话分发。</p>
+    <p class="muted">请填完整会话ID（如 <code>onebot:GroupMessage:123456</code>），可在目标会话发送 <code>/sid</code> 获取当前会话ID，或从上表复制。推文的作者用户名或命中规则的 tag 匹配任一订阅项即转发到该会话；相关用户/标签需已有对应流规则（上方可新增），本插件只负责按会话分发。</p>
   </div>
 
   <div id="toast"></div>
